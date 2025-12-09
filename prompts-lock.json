@@ -1,0 +1,30 @@
+{
+  "lockfileVersion": 1,
+  "prompts": {
+    "orchestrator": {
+      "version": 1,
+      "versionId": "prompt_version_-Zq7OmMS43cW8pyGgov9D",
+      "materialized": "prompts/orchestrator.prompt.yaml"
+    },
+    "ui-agent": {
+      "version": 1,
+      "versionId": "prompt_version_MRagW57yNMzZBswfVtjs4",
+      "materialized": "prompts/ui-agent.prompt.yaml"
+    },
+    "styling-agent": {
+      "version": 1,
+      "versionId": "prompt_version_jG4Uj6GjKDEdHiuDPMMs0",
+      "materialized": "prompts/styling-agent.prompt.yaml"
+    },
+    "deployment-agent": {
+      "version": 1,
+      "versionId": "prompt_version_ADGqjHrugHxfklDotVjL9",
+      "materialized": "prompts/deployment-agent.prompt.yaml"
+    },
+    "project-context-agent": {
+      "version": 1,
+      "versionId": "prompt_version_cLjZYSsjxKQ48CFBUD1wJ",
+      "materialized": "prompts/project-context-agent.prompt.yaml"
+    }
+  }
+}

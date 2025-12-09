@@ -1,0 +1,5 @@
+{
+  "prompts": {
+    "project-context-agent": "file:prompts/project-context-agent.prompt.yaml"
+  }
+}
