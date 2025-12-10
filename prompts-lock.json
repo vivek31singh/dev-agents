@@ -32,8 +32,8 @@
       "materialized": "prompts\\coder-agent.prompt.yaml"
     },
     "nextjs-coder": {
-      "version": 2,
-      "versionId": "wmeXl6h3-7BrWrdJp7JU8",
+      "version": 3,
+      "versionId": "6xr64qfzVmjOs0lFPK4Tl",
       "materialized": "prompts/nextjs-coder.prompt.yaml"
     }
   }

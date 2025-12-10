@@ -1,4 +1,4 @@
-model: openai/gpt-4o
+model: zhipuai-coding-plan/glm-4.6
 modelParameters:
   temperature: 0.2
 messages:

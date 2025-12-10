@@ -1,25 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
-import { langwatch } from "@/lib/langwatch";
-
-async function getPrompt(name: string): Promise<{
-  model: string;
-  messages: Array<{
-    role: "user" | "assistant" | "system";
-    content: string;
-  }>;
-  prompt?: string;
-  temperature?: number;
-}> {
-  const config = await langwatch.prompts.get(name);
-  return config ?? {
-    model: "zai-coding-plan/glm-4.6",
-    messages: [],
-    prompt: "You are a helpful assistant.",
-    temperature: 0,
-  };
-}
+import { getPrompt } from "@/lib/langwatch";
 
 const config = await getPrompt("project-context-agent");
 
