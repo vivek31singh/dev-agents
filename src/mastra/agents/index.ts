@@ -1,11 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
-import { LangWatch } from "langwatch";
-
-const langwatch = new LangWatch({
-  apiKey: process.env.LANGWATCH_API_KEY,
-});
+import { langwatch } from "@/lib/langwatch";
 
 async function getPrompt(name: string): Promise<{
   model: string;

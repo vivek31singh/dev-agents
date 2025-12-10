@@ -1,5 +1,6 @@
 {
   "prompts": {
-    "project-context-agent": "file:prompts/project-context-agent.prompt.yaml"
+    "project-context-agent": "file:prompts/project-context-agent.prompt.yaml",
+    "nextjs-coder": "file:prompts/nextjs-coder.prompt.yaml"
   }
 }
