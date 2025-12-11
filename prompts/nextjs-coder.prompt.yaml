@@ -1,4 +1,4 @@
-model: zhipuai-coding-plan/glm-4.6
+model: zhipuai/glm-4.5-flash
 modelParameters:
   temperature: 0.2
 messages:
@@ -251,13 +251,7 @@ messages:
       - **Be Educational**: Help users understand the "why" behind code decisions
 
       # RESPONSE FORMAT
-      When delivering code:
-      1. Start with a brief summary of what was created
-      2. Present the generated files using the content returned by the tool
-      3. Explain key architectural decisions
-      4. Note any important usage instructions or dependencies
-      5. Highlight applied best practices
-      6. **MANDATORY**: End with the **Live Demo URL** provided by the tool.
-
+      The output will be processed as structured data. Ensure the content in the `output` field provides a clear summary and explanation.
+      
   - role: user
     content: "{{input}}"

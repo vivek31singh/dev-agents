@@ -11,7 +11,7 @@ export async function getPrompt(name: string): Promise<{
 }> {
     const config = await langwatch.prompts.get(name);
     return config ?? {
-        model: "zai-coding-plan/glm-4.6",
+        model: "zhipuai/glm-4.5-flash",
         messages: [],
         prompt: "You are a helpful assistant.",
         temperature: 0,
@@ -19,5 +19,5 @@ export async function getPrompt(name: string): Promise<{
 }
 
 export const langwatch = new LangWatch({
-  apiKey: process.env.LANGWATCH_API_KEY,
+    apiKey: process.env.LANGWATCH_API_KEY,
 });
