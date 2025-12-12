@@ -23,7 +23,7 @@
     },
     "project-context-agent": {
       "version": 2,
-      "versionId": "BewiFPKVJqIlCVsX1Vk82",
+      "versionId": "3tVzg7gnWpURgvLwK1KIZ",
       "materialized": "prompts/project-context-agent.prompt.yaml"
     },
     "coder-agent": {
@@ -32,8 +32,8 @@
       "materialized": "prompts\\coder-agent.prompt.yaml"
     },
     "nextjs-coder": {
-      "version": 5,
-      "versionId": "oSi6hHoJesOkzazSPFM80",
+      "version": 1,
+      "versionId": "prompt_version_lXC8bzzRSbRbmjkJ8fot5",
       "materialized": "prompts/nextjs-coder.prompt.yaml"
     }
   }

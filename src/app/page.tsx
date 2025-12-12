@@ -329,11 +329,11 @@ function CreateProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () 
               <input
                 type="text"
                 className="form-input"
-                placeholder="my-awesome-project"
+                placeholder="owner/repository-name"
                 value={formData.repoName}
                 onChange={(e) => setFormData({ ...formData, repoName: e.target.value })}
               />
-              <p className="form-hint">github.com/username/{formData.repoName || "repo-name"}</p>
+              <p className="form-hint">github.com/{formData.repoName || "owner/repository-name"}</p>
             </div>
 
             <div className="form-group">
@@ -647,6 +647,10 @@ export default function DashboardPage() {
           <div className="nav-item" onClick={() => handleNavClick("chat")}>
             <span className="nav-item-icon"><Icons.Chat /></span>
             Chat with Agent
+          </div>
+          <div className="nav-item" onClick={() => window.location.href = '/create-project'}>
+            <span className="nav-item-icon"><Icons.Plus /></span>
+            Create Project
           </div>
         </div>
       </aside>

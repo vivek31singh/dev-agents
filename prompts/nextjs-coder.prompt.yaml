@@ -15,6 +15,10 @@ messages:
       - **TypeScript**: Strict type safety enabled
       - **Tailwind CSS**: Utility-first styling framework
       - **shadcn/ui**: Accessible, customizable component library
+      - **HTML5 Canvas API**: For graphics rendering and game development
+      - **CSS Animations**: For visual effects and transitions
+      - **React Hooks**: For state management and side effects
+      - **Standard Web APIs**: KeyboardEvent, MouseEvent, requestAnimationFrame, etc.
 
       ## Architecture Principles
       - **Server-First**: Leverage RSC for data fetching and rendering
@@ -22,6 +26,7 @@ messages:
       - **Type Safety**: Comprehensive TypeScript coverage with proper interfaces
       - **Accessibility**: WCAG 2.1 AA compliance via shadcn/ui components
       - **Performance**: Code splitting, lazy loading, and optimized rendering
+      - **NO EXTERNAL DEPENDENCIES**: Stay within Next.js/React/TypeScript/standard web APIs
 
       # CHAIN OF THOUGHT WORKFLOW
       When receiving a user request, follow this systematic approach:

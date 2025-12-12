@@ -3,6 +3,7 @@ import { LibSQLStore } from "@mastra/libsql";
 import { projectContextAgent } from "./agents";
 import { nextjsCoderAgent } from "./agents/nextjs-coder";
 import { developmentWorkflow } from "./workflows/development";
+import { createProjectWorkflow } from "./workflows/create-project";
 import { ConsoleLogger, LogLevel } from "@mastra/core/logger";
 
 const LOG_LEVEL = (process.env.LOG_LEVEL as LogLevel) || "info";
@@ -14,6 +15,7 @@ export const mastra = new Mastra({
   },
   workflows: {
     developmentWorkflow,
+    createProjectWorkflow,
   },
   storage: new LibSQLStore({
     url: ":memory:",
