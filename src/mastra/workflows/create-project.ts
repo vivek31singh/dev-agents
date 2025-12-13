@@ -1,4 +1,5 @@
-import { createRepository, repositoryExists, fetchAllRepositoryFiles } from "../../lib/git";
+import { storeVector } from "@/lib/vector";
+import { createRepository, repositoryExists, fetchAllRepositoryFiles, pushFilesAsCommit } from "../../lib/git";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 
@@ -18,7 +19,13 @@ const checkRepoExists = createStep({
         description: z.string().describe("Description of the project"),
         initialPrompt: z.string().describe("Initial prompt for the project"),
     }),
-    execute: async ({ inputData }) => {
+    stateSchema: z.object({
+        repoName: z.string(),
+        owner: z.string(),
+        repositoryUrl: z.string(),
+        tasksMd: z.string(),
+    }),
+    execute: async ({ inputData, setState }) => {
         // Validate inputData exists
         if (!inputData) {
             throw new Error("Input data is required");
@@ -40,7 +47,13 @@ const checkRepoExists = createStep({
         try {
 
             const IsRepoAlreadyExists = await repositoryExists(owner, repoName, token);
-
+            setState({
+                repoName,
+                owner,
+                repositoryUrl: `https://github.com/${owner}/${repoName}
+                `,
+                tasksMd: ""
+            });
             return {
                 IsRepoAlreadyExists,
                 projectName,
@@ -72,7 +85,7 @@ const fetchRepoContent = createStep({
         })).describe("Array of all files with their paths and content"),
         fileCount: z.number().describe("Total number of files fetched")
     }),
-    execute: async ({ inputData }) => {
+    execute: async ({ inputData, setState }) => {
         // Validate inputData exists
         if (!inputData) {
             throw new Error("Input data is required");
@@ -107,6 +120,15 @@ const fetchRepoContent = createStep({
             const repositoryFiles = await fetchAllRepositoryFiles(owner, repoName, token, 'main');
 
             console.log(`Successfully fetched ${repositoryFiles.length} files from ${owner}/${repoName}`);
+
+            const tasksMd = repositoryFiles.find(file => file.path.toLowerCase() === "tasks.md");
+            if (!tasksMd) {
+                throw new Error("tasks.md file not found in the repository");
+            }
+
+            setState({
+                tasksMd: tasksMd.content
+            });
 
             return {
                 repositoryFiles,
@@ -182,62 +204,12 @@ const initializeRepository = createStep({
     },
 });
 
-const synthesisResults = createStep({
-    id: "synthesis-results",
-    inputSchema: z.object({
-        "fetch-repo-content": z.object({
-            repositoryFiles: z.array(z.object({
-                path: z.string().describe("File path in the repository"),
-                content: z.string().describe("Content of the file")
-            })).describe("Array of all files with their paths and content"),
-            fileCount: z.number().describe("Total number of files fetched")
-        }),
-        "initialize-repository": z.object({
-            initialPrompt: z.string().describe("Initial prompt for the project"),
-            repositoryUrl: z.string().describe("URL of the created repository"),
-            owner: z.string().describe("Owner of the repository"),
-            repoName: z.string().describe("Name of the created repository")
-        })
-    }),
-    outputSchema: z.union([
-        z.object({
-            action: z.literal("fetch"),
-            repositoryFiles: z.array(z.object({
-                path: z.string(),
-                content: z.string()
-            })),
-            fileCount: z.number()
-        }),
-        z.object({
-            action: z.literal("create"),
-            initialPrompt: z.string().describe("Initial prompt for the project"),
-            repositoryUrl: z.string(),
-            owner: z.string(),
-            repoName: z.string()
-        })
-    ]),
-    execute: async ({ inputData }) => {
-        const { "fetch-repo-content": fetchResult, "initialize-repository": initResult } = inputData;
-
-        if (fetchResult) {
-            return {
-                action: "fetch" as const,
-                repositoryFiles: fetchResult.repositoryFiles,
-                fileCount: fetchResult.fileCount
-            };
-        } else if (initResult) {
-            return {
-                action: "create" as const,
-                initialPrompt: initResult.initialPrompt,
-                repositoryUrl: initResult.repositoryUrl,
-                owner: initResult.owner,
-                repoName: initResult.repoName
-            };
-        }
-
-        throw new Error("No valid result found");
-    },
-});
+const subTasksSchema = z.array(z.object({
+    id: z.number(),
+    title: z.string(),
+    description: z.string(),
+    dependencies: z.array(z.number()).optional(),
+}));
 
 const analysePrompt = createStep({
     id: "analyse-prompt",
@@ -258,33 +230,22 @@ const analysePrompt = createStep({
             repoName: z.string()
         })
     ]),
-    outputSchema: z.array(z.object({
-        id: z.number(),
-        title: z.string(),
-        description: z.string(),
-        dependencies: z.array(z.number()).optional(),
-    })),
-    stateSchema: z.object({
-        name: z.string(),
-        subtasks: z.array(z.object({
-            id: z.number(),
-            title: z.string(),
-            description: z.string(),
-            dependencies: z.array(z.number()).optional(),
-        })),
+    outputSchema: z.object({
+        action: z.string(),
+        subtasks: subTasksSchema,
+        tasksMd: z.string(),
     }),
-    execute: async ({ inputData, mastra }) => {
-        // Type guard to check if we have a "create" action with initialPrompt
-        if (inputData.action === "create") {
-            if (!inputData.initialPrompt.trim() || inputData.initialPrompt.length === 0) throw new Error("Prompt is required");
-        } else {
-            throw new Error("analysePrompt step only supports 'create' action");
-        }
+    execute: async ({ inputData, mastra, setState }) => {
+
+        if (inputData.action !== "create") throw new Error("analysePrompt step only supports 'create' action");
+
+        if (!inputData.initialPrompt.trim() || inputData.initialPrompt.length === 0) throw new Error("Prompt is required");
 
         try {
             const agent = mastra.getAgent("nextjsCoderAgent");
             const response = await agent.generate(inputData.initialPrompt, {
-                instructions: `You are a Next.js project planning specialist. Your task is to analyze the given project prompt and break it down into a sequential list of executable subtasks that will guide the step-by-step development of the project.
+                instructions:
+                    `You are a Next.js project planning specialist. Your task is to analyze the given project prompt and break it down into a sequential list of executable subtasks that will guide the step-by-step development of the project.
 
 IMPORTANT CONSTRAINTS:
 - ALL implementation MUST stay within the Next.js ecosystem
@@ -368,7 +329,21 @@ The subtasks should be granular enough to be executed independently but comprehe
                 throw new Error("Failed to get structured response from agent");
             }
 
-            return response.object;
+            const subtasks = response.object;
+
+            // Generate Markdown
+            const tasksMd = "# Project Tasks\n\n" + subtasks.map(task =>
+                `## [Task ${task.id}] ${task.title}
+Status: Pending
+Dependencies: ${task.dependencies?.join(', ') || 'None'}
+
+${task.description}
+`
+            ).join("\n");
+
+            setState({ tasksMd });
+
+            return { action: "create", subtasks, tasksMd };
 
         } catch (err) {
             throw new Error(`Failed to analyse prompt: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -376,8 +351,73 @@ The subtasks should be granular enough to be executed independently but comprehe
     },
 });
 
+function chunkText(text: string, maxChars: number = 3000): string[] {
+    const chunks: string[] = [];
+    let currentChunk = "";
+    const lines = text.split('\n');
+
+    for (const line of lines) {
+        if (currentChunk.length + line.length > maxChars) {
+            if (currentChunk.trim()) chunks.push(currentChunk.trim());
+            currentChunk = line;
+        } else {
+            currentChunk += (currentChunk ? '\n' : '') + line;
+        }
+    }
+    if (currentChunk.trim()) chunks.push(currentChunk.trim());
+    return chunks.length > 0 ? chunks : [text.trim()].filter(Boolean);
+}
+
+const SKIP_PATTERNS = [
+    'package-lock.json',
+    'pnpm-lock.yaml',
+    'yarn.lock',
+    '.lock',
+    '.svg',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.ico',
+    '.woff',
+    '.woff2',
+    '.ttf',
+    '.eot',
+    '.mp4',
+    '.mp3',
+    '.webm',
+    '.pdf',
+    '.zip',
+    '.tar',
+    '.gz',
+    'node_modules/',
+    '.next/',
+    'dist/',
+    '.git/',
+];
+
+const MAX_FILE_SIZE = 50000;
+
+function shouldSkipFile(filePath: string, content: string): boolean {
+    if (SKIP_PATTERNS.some(pattern => filePath.toLowerCase().includes(pattern.toLowerCase()))) {
+        return true;
+    }
+    if (content.length > MAX_FILE_SIZE) {
+        return true;
+    }
+    const nonPrintable = content.slice(0, 1000).split('').filter(c => {
+        const code = c.charCodeAt(0);
+        return code < 32 && code !== 9 && code !== 10 && code !== 13;
+    }).length;
+    if (nonPrintable > 10) {
+        return true;
+    }
+    return false;
+}
+
 const createEmbeddings = createStep({
     id: "create-embeddings",
+    description: "Create embeddings for the project",
     inputSchema: z.union([
         z.object({
             action: z.literal("fetch"),
@@ -396,23 +436,128 @@ const createEmbeddings = createStep({
         })
     ]),
     outputSchema: z.object({
-        embeddings: z.array(z.number()),
+        action: z.string(),
+        skippedFiles: z.number(),
+        totalChunks: z.number(),
     }),
-    execute: async ({ inputData }) => {
+    stateSchema: z.object({
+        repoName: z.string(),
+        owner: z.string(),
+        repositoryUrl: z.string(),
+        tasksMd: z.string(),
+    }),
+    execute: async ({ inputData, state }) => {
         const { action } = inputData;
 
-        // Type guard to handle different actions
-        if (action === "fetch") {
-            // Handle fetch case with repositoryFiles
-            // const embeddings = await createEmbeddingsFromFiles(inputData.repositoryFiles);
-        } else {
-            // Handle create case
-            // const embeddings = await createEmbeddingsFromPrompt(inputData.initialPrompt);
+        if (action !== "fetch") {
+            throw new Error("Invalid action");
         }
 
-        return { embeddings: [] };
+        let skippedFiles = 0;
+        let totalChunks = 0;
+
+        for (const file of inputData.repositoryFiles) {
+            // Skip files that shouldn't be embedded
+            if (shouldSkipFile(file.path, file.content)) {
+                skippedFiles++;
+                continue;
+            }
+
+            // Chunk the file content to avoid sparse vector size limits
+            const chunks = chunkText(file.content, 3000);
+            console.log(`[embeddings] Processing ${file.path}: ${chunks.length} chunk(s)`);
+
+            for (let i = 0; i < chunks.length; i++) {
+                const chunkId = chunks.length > 1
+                    ? `${state.repoName}-${file.path}-chunk-${i}`
+                    : `${state.repoName}-${file.path}`;
+
+                await storeVector({
+                    id: chunkId,
+                    data: chunks[i],
+                    metadata: {
+                        fileName: file.path.split("/").pop(),
+                        filePath: file.path,
+                        chunkIndex: i,
+                        totalChunks: chunks.length,
+                    },
+                });
+                totalChunks++;
+            }
+        }
+
+        console.log(`[embeddings] Completed: ${totalChunks} chunks from ${inputData.repositoryFiles.length - skippedFiles} files (${skippedFiles} skipped)`);
+        return { action: action, skippedFiles, totalChunks };
     },
 });
+
+const commitTasksFile = createStep({
+    id: "commit-tasks-file",
+    description: "Commits tasks.md file to the repository",
+    inputSchema: z.object({
+        action: z.string(),
+        subtasks: subTasksSchema,
+        tasksMd: z.string(),
+    }),
+    outputSchema: z.object({
+        action: z.string(),
+        subtasks: subTasksSchema,
+        tasksMd: z.string(),
+    }),
+    stateSchema: z.object({
+        repoName: z.string(),
+        owner: z.string(),
+        repositoryUrl: z.string(),
+        tasksMd: z.string(),
+    }),
+    execute: async ({ inputData, state }) => {
+        const { tasksMd } = inputData;
+        const { owner, repoName } = state;
+
+        if (!owner || !repoName) throw new Error("Owner or repoName missing from state");
+
+        const token = process.env.GITHUB_TOKEN || "";
+
+        await pushFilesAsCommit({
+            owner,
+            repo: repoName,
+            baseBranch: "main",
+            newBranch: "main",
+            files: [{ path: "tasks.md", content: tasksMd }],
+            commitMessage: "Add project tasks plan",
+            token,
+        });
+
+        return { action: "create", subtasks: inputData.subtasks, tasksMd };
+    }
+});
+
+const projectPlanningWorkflow = createWorkflow({
+    id: "project-planning-workflow",
+    inputSchema: z.union([
+        z.object({
+            action: z.literal("fetch"),
+            repositoryFiles: z.array(z.object({
+                path: z.string(),
+                content: z.string()
+            })),
+            fileCount: z.number()
+        }),
+        z.object({
+            action: z.literal("create"),
+            initialPrompt: z.string().describe("Initial prompt for the project"),
+            repositoryUrl: z.string(),
+            owner: z.string(),
+            repoName: z.string()
+        })
+    ]),
+    outputSchema: z.object({
+        action: z.string(),
+        subtasks: subTasksSchema,
+        tasksMd: z.string(),
+    }),
+    steps: [analysePrompt, commitTasksFile],
+}).then(analysePrompt).then(commitTasksFile).commit();
 
 export const createProjectWorkflow = createWorkflow({
     id: "create-project-workflow",
@@ -439,12 +584,16 @@ export const createProjectWorkflow = createWorkflow({
             repoName: z.string()
         })
     ]),
-
+    stateSchema: z.object({
+        repoName: z.string(),
+        owner: z.string(),
+        repositoryUrl: z.string(),
+        tasksMd: z.string(),
+    }),
     steps: [
         checkRepoExists,
         fetchRepoContent,
         initializeRepository,
-        synthesisResults,
         analysePrompt,
         createEmbeddings
     ],
@@ -453,7 +602,27 @@ export const createProjectWorkflow = createWorkflow({
         [async ({ inputData }) => inputData.IsRepoAlreadyExists, fetchRepoContent],
         [async ({ inputData }) => !inputData.IsRepoAlreadyExists, initializeRepository],
     ])
-    .then(synthesisResults)
+    .map(async ({ inputData }) => {
+        const { "fetch-repo-content": fetchResult, "initialize-repository": initResult } = inputData;
+
+        if (fetchResult) {
+            return {
+                action: "fetch" as const,
+                repositoryFiles: fetchResult.repositoryFiles,
+                fileCount: fetchResult.fileCount
+            };
+        } else if (initResult) {
+            return {
+                action: "create" as const,
+                initialPrompt: initResult.initialPrompt,
+                repositoryUrl: initResult.repositoryUrl,
+                owner: initResult.owner,
+                repoName: initResult.repoName
+            };
+        }
+
+        throw new Error("No valid result found");
+    })
     .branch([
         [async ({ inputData }) => inputData.action === "fetch", createEmbeddings],
         [async ({ inputData }) => inputData.action === "create", analysePrompt],

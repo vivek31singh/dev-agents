@@ -218,6 +218,42 @@ export async function getBranchSHA(owner: string, repo: string, branch: string, 
     return res.data.object.sha;
 }
 
+export async function getCommitTreeSHA(owner: string, repo: string, commitSHA: string, token: string) {
+    const res = await axios.get(
+        `https://api.github.com/repos/${owner}/${repo}/git/commits/${commitSHA}`,
+        {
+            headers: { Authorization: `token ${token}` }
+        }
+    );
+    return res.data.tree.sha;
+}
+
+export async function commitFilesToBranch(
+    owner: string,
+    repo: string,
+    branch: string,
+    files: { path: string; content: string }[],
+    message: string,
+    token: string
+) {
+    // 1. Get Tip
+    const baseSHA = await getBranchSHA(owner, repo, branch, token);
+
+    // 2. Get Tree
+    const baseTreeSHA = await getCommitTreeSHA(owner, repo, baseSHA, token);
+
+    // 3. Create New Tree
+    const newTreeSHA = await createTree(owner, repo, baseTreeSHA, files, token);
+
+    // 4. Create Commit
+    const commitSHA = await createCommit(owner, repo, baseSHA, newTreeSHA, message, token);
+
+    // 5. Update Ref
+    await updateBranch(owner, repo, branch, commitSHA, token);
+
+    return commitSHA;
+}
+
 export async function createBlob(owner: string, repo: string, content: string, token: string) {
     const res = await axios.post(
         `https://api.github.com/repos/${owner}/${repo}/git/blobs`,
@@ -332,32 +368,32 @@ export async function createRepository(
         : 'https://api.github.com/user/repos';
 
 
-        try{
+    try {
 
-            const res = await axios.post(
-                endpoint,
-                {
-                    name,
-                    description,
-                    private: isPrivate,
-                    auto_init: true, // Initialize with README to enable Git Data API
-                },
-                {
-                    headers: { Authorization: `token ${token}` }
-                }
-            );
-            
-            return {
-                name: res.data.name,
-                fullName: res.data.full_name,
-                htmlUrl: res.data.html_url,
-                cloneUrl: res.data.clone_url,
-                owner: res.data.owner.login,
-            };
-        }catch(error){
-            console.log(error);
-            throw error;
-        }
+        const res = await axios.post(
+            endpoint,
+            {
+                name,
+                description,
+                private: isPrivate,
+                auto_init: true, // Initialize with README to enable Git Data API
+            },
+            {
+                headers: { Authorization: `token ${token}` }
+            }
+        );
+
+        return {
+            name: res.data.name,
+            fullName: res.data.full_name,
+            htmlUrl: res.data.html_url,
+            cloneUrl: res.data.clone_url,
+            owner: res.data.owner.login,
+        };
+    } catch (error) {
+        console.log(error);
+        throw error;
+    }
 }
 
 /**
