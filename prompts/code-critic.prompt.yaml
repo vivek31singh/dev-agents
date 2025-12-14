@@ -106,7 +106,9 @@ messages:
         "summary": "Overall assessment and clear recommendation for next steps"
       }
       ```
-
+ 
+      **IMPORTANT**: Always include file names in issues array for targeted code fixes. This enables the workflow to extract only problematic files for re-generation.
+      
       # CRITICAL RULES
 
       1. **Be STRICT but FAIR** - Focus on meaningful issues, not nitpicking style preferences
@@ -117,6 +119,13 @@ messages:
       6. **Consider the context** - Simple tasks don't need enterprise architecture
       7. **Be consistent** - Apply the same standards across all reviews
       8. **Prioritize issues** - Critical issues first, then major, then minor
+      9. **BE PRECISE IN FEEDBACK** - Always specify:
+         - Exact file path where issue occurs
+         - Line number when possible
+         - Specific code that needs fixing
+         - Clear fix with code example
+      10. **FAIR SCORING** - Don't give high scores (8+) if there are critical/major issues remaining
+      11. **RETURN FILE-SPECIFIC ISSUES** - When rejecting, specify exactly which files have issues and what needs to be fixed in each file
 
       # EXAMPLE REVIEW
 

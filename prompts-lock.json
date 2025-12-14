@@ -32,14 +32,14 @@
       "materialized": "prompts\\coder-agent.prompt.yaml"
     },
     "nextjs-coder": {
-      "version": 5,
-      "versionId": "remote_version",
+      "version": 7,
+      "versionId": "Aayrg9-9v2G9mfdAzJdws",
       "materialized": "prompts/nextjs-coder.prompt.yaml"
     },
     "code-critic": {
-      "version": 1,
-      "versionId": "prompt_version_64uenK6mF8uGOIsFi2oG-",
-      "materialized": "prompts\\code-critic.prompt.yaml"
+      "version": 2,
+      "versionId": "QQZhO17W3QQAchn5cz8Ng",
+      "materialized": "prompts/code-critic.prompt.yaml"
     }
   }
 }

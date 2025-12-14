@@ -8,6 +8,7 @@ const subTasksSchema = z.array(z.object({
     title: z.string(),
     description: z.string(),
     dependencies: z.array(z.number()).optional(),
+    group: z.string().optional()
 }));
 
 // Step 1: Check if Repo Exists
@@ -31,7 +32,6 @@ const checkRepoExists = createStep({
         repoName: z.string(),
         owner: z.string(),
         repositoryUrl: z.string(),
-        tasksMd: z.string(),
     }),
     execute: async ({ inputData, setState }) => {
         try {
@@ -50,7 +50,6 @@ const checkRepoExists = createStep({
                 repoName,
                 owner,
                 repositoryUrl: `https://github.com/${owner}/${repoName}`,
-                tasksMd: ""
             });
 
             return {
@@ -94,7 +93,6 @@ const initializeRepository = createStep({
             const repoName = RepositoryName.split("/")[1];
             const token = process.env.GITHUB_TOKEN || "";
 
-            // User modification: removed owner arg
             const newRepo = await createRepository(repoName, false, description, token);
 
             return {
@@ -120,13 +118,11 @@ const analysePrompt = createStep({
     }),
     outputSchema: z.object({
         subtasks: subTasksSchema,
-        tasksMd: z.string(),
     }),
     stateSchema: z.object({
         repoName: z.string(),
         owner: z.string(),
         repositoryUrl: z.string(),
-        tasksMd: z.string(),
     }),
     execute: async ({ inputData, mastra, setState }) => {
         try {
@@ -136,126 +132,74 @@ const analysePrompt = createStep({
             if (!agent) throw new Error("Agent 'nextjsCoderAgent' not found");
 
             const response = await agent.generate(inputData.initialPrompt, {
-                instructions: `You are a Next.js project planning specialist. Your task is to analyze the given project prompt and break it down into a sequential list of executable subtasks that will guide the step-by-step development of the project.
+                instructions: `You are a Next.js project planning specialist. Your task is to analyze the project prompt and break it down into execution groups (tracks) for parallel development.
 
-IMPORTANT CONSTRAINTS:
-- ALL implementation MUST stay within the Next.js ecosystem
-- Use ONLY React, TypeScript, Next.js features, and standard web APIs
-- NO external game engines, physics libraries, or heavy dependencies
-- Use HTML5 Canvas API, CSS animations, and React hooks for any game-like functionality
-- Leverage Next.js App Router, Server Components, and Client Components appropriately
+IMPORTANT STRATEGY:
+1. **Group ID "core"**: Project Setup, Configuration, Shared Utilities. (Must run first).
+2. **Group ID "ui"**: UI Components, Styling, Themes, Layouts. (Runs in parallel with Functionality).
+3. **Group ID "functionality"**: Core Business Logic, API Routes, State Management, Data Fetching. (Runs in parallel with UI).
 
-IMPORTANT: You must respond with a JSON array matching this structure:
-[
+Response JSON Structure:
+{
+  "groups": [
     {
-      "id": 1,
-      "title": "Set up Next.js project structure",
-      "description": "Initialize a new Next.js project with TypeScript and configure the basic directory structure",
-      "dependencies": []
+      "id": "core",
+      "title": "Project Setup",
+      "tasks": [...]
     },
     {
-      "id": 2,
-      "title": "Configure Tailwind CSS and shadcn/ui",
-      "description": "Install and configure Tailwind CSS along with shadcn/ui components for consistent styling",
-      "dependencies": [1]
+       "id": "ui",
+       "title": "UI & Components",
+       ...
+    },
+    {
+       "id": "functionality",
+       "title": "Core Functionality",
+       ...
     }
   ]
+}
 
-Follow this systematic approach based on the type of project requested:
+Use EXACTLY these id strings: "core", "ui", "functionality".
 
---- SCENARIO A: WEB APPS / DASHBOARDS / SAAS ---
-1. SETUP & CONFIGURATION
-   - Init Next.js + TypeScript
-   - Setup Tailwind, shadcn/ui, ThemeProvider
-   - Configure global states/contexts
-
-2. LAYOUT & NAVIGATION
-   - Create Root Layout (metadata, fonts)
-   - Implement Sidebar/Navbar components
-   - Define loading.tsx and error.tsx
-
-3. CORE FEATURES & PAGES
-   - Create main route pages
-   - Build reusable data-display components (Tables, Cards)
-   - Implement forms with validation (React Hook Form + Zod)
-
---- SCENARIO B: WEB GAMES (e.g., Mario, Platformers, Snake) ---
-1. GAME ENGINE SETUP
-   - Create a main Game Container component
-   - setup 'useGameLoop' hook using requestAnimationFrame
-   - Initialize Canvas refs and context
-
-2. STATE MANAGEMENT & PHYSICS
-   - Design the Game State (score, player position, entity lists)
-   - Implement collision detection logic (AABB or similar)
-   - Create InputHandler (keyboard/touch listeners)
-
-3. RENDERING & ASSETS
-   - Create Sprite rendering system (on Canvas)
-   - Implement simple animations (frame-based)
-   - Add rudimentary sound effects (Web Audio API)
-
---- SCENARIO C: UI TEMPLATES / LANDING PAGES ---
-1. FOUNDATIONS
-   - Define Color Palette and Typography via Tailwind config
-   - Create a comprehensive Component Library (Buttons, Inputs, Cards)
-
-2. SECTIONS & BLOCKS
-   - Build Hero Section with animations
-   - Build Feature Grid, Testimonials, Footer
-   - Ensure complete Mobile Responsiveness
-
-3. POLISH
-   - Add Framer Motion for scroll reveals
-   - Optimize images and fonts
-   - Verify Accessibility (ARIA)
-
-For each subtask:
-- Provide a clear, actionable title
-- Include a detailed description of what needs to be done
-- Specify dependencies (which subtasks must be completed first)
-- Ensure tasks are ordered logically
-- Keep all implementation within Next.js/React/TypeScript/standard web APIs
-
-The subtasks should be granular enough to be executed independently but comprehensive enough to cover the entire project development.`,
+Ensure tasks within a group are sequential dependencies.
+Total tasks should cover the whole project.`,
                 structuredOutput: {
-                    schema: subTasksSchema,
+                    schema: z.object({
+                        groups: z.array(z.object({
+                            id: z.enum(["core", "ui", "functionality"]),
+                            title: z.string(),
+                            tasks: z.array(z.object({
+                                id: z.number(),
+                                title: z.string(),
+                                description: z.string(),
+                                dependencies: z.array(z.number()).optional(),
+                            }))
+                        }))
+                    }),
                     errorStrategy: 'strict'
                 }
             });
 
-            const subtasks = response.object || [];
+            if (!response.object) throw new Error("Failed to get structured response from agent");
 
-            // Generate JSON tasks.md with "pending" status
-            const tasksMd = "```json\n" + JSON.stringify(subtasks.map(task => ({
-                id: task.id,
-                title: task.title,
-                description: task.description,
-                dependencies: task.dependencies || [],
-                status: "pending"
-            })), null, 2) + "\n```";
+            const { groups } = response.object;
+            const allTasks = groups.flatMap(g => g.tasks.map(t => ({ ...t, group: g.id, status: "pending" })));
 
-            // Update State with ALL info to ensure persistence
-            setState({
-                tasksMd,
-                owner,
-                repoName,
-                repositoryUrl
-            });
+            setState({ owner, repoName, repositoryUrl });
 
-            return { subtasks, tasksMd };
+            return { subtasks: allTasks };
         } catch (error) {
             throw new Error(`Failed to analyze prompt: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
     },
 });
 
-// Step 4: Commit Tasks.md
+// Step 4: Commit Tasks.json (Single Source)
 const commitTasksFile = createStep({
     id: "commit-tasks-file",
     inputSchema: z.object({
         subtasks: subTasksSchema,
-        tasksMd: z.string(),
     }),
     outputSchema: z.object({
         status: z.string(),
@@ -266,32 +210,30 @@ const commitTasksFile = createStep({
         repoName: z.string(),
         owner: z.string(),
         repositoryUrl: z.string(),
-        tasksMd: z.string(),
     }),
     execute: async ({ inputData, state }) => {
         try {
-            const { tasksMd } = inputData;
+            const { subtasks } = inputData;
             const { owner, repoName } = state;
 
-            if (!owner || !repoName) throw new Error("State missing owner or repoName. Ensure upstream steps propagate state correctly.");
+            if (!owner || !repoName) throw new Error("State missing owner or repoName.");
 
             const token = process.env.GITHUB_TOKEN || "";
-            const branch = "main";
+            const tasksJson = JSON.stringify(subtasks, null, 2);
 
-            // Replaced repetitive logic with commitFilesToBranch utility
             const commitSHA = await commitFilesToBranch(
                 owner,
                 repoName,
-                branch,
-                [{ path: "tasks.md", content: tasksMd }],
-                "Initialize project with tasks.md plan",
+                "main",
+                [{ path: "tasks.json", content: tasksJson }],
+                "Initialize project with tasks.json plan (Parallel Groups)",
                 token
             );
 
             return {
                 status: "success",
                 commitSha: commitSHA,
-                fileUrl: `https://github.com/${owner}/${repoName}/blob/main/tasks.md`
+                fileUrl: `https://github.com/${owner}/${repoName}/blob/main/tasks.json`
             };
         } catch (error) {
             console.error(error);
