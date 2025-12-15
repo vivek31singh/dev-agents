@@ -5,13 +5,13 @@ const index = new Index({
     token: process.env.UPSTASH_VECTOR_TOKEN,
 })
 
-export const storeVector = async ({ id, data, metadata }: { id: string, data: string, metadata: any }) => {
+export const storeVector = async ({ id, data, metadata, namespace }: { id: string, data: string, metadata: any, namespace?: string }) => {
     try {
         const result = await index.upsert({
             id,
             data,
             metadata,
-        });
+        },{namespace: namespace});
 
         return result;
     }
@@ -20,13 +20,15 @@ export const storeVector = async ({ id, data, metadata }: { id: string, data: st
     }
 }
 
-export const searchVector = async ({ data, topK = 3 }: { data: string; topK?: number }) => {
+export const searchVector = async ({ data, topK = 3, namespace }: { data: string; topK?: number; namespace?: string }) => {
     try {
         const result = await index.query({
             data,
             topK,
             includeVectors: true,
             includeMetadata: true,
+        }, {
+            namespace
         });
 
         return result;
@@ -36,11 +38,11 @@ export const searchVector = async ({ data, topK = 3 }: { data: string; topK?: nu
     }
 }
 
-export const removeVectors = async ({ prefix }: { prefix: string }) => {
+export const removeVectors = async ({ prefix, namespace }: { prefix: string, namespace?: string }) => {
     try {
         const result = await index.delete({
             prefix,
-        });
+        }, { namespace });
 
         return result;
     }

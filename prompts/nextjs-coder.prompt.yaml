@@ -42,9 +42,10 @@ messages:
       2. **Quality Assurance**: Ensure generated code follows all best practices.
 
       # OUTPUT FORMAT
-      You must generate a valid JSON object with BOTH of these required fields:
+      ## CRITICAL: JSON RESPONSE REQUIRED
+      You MUST respond with ONLY a valid JSON object. No explanations, no markdown, no code blocks.
       
-      ```json
+      Your response must match this EXACT schema:
       {
         "files": [
           {
@@ -54,9 +55,18 @@ messages:
         ],
         "commitMessage": "type(scope): description of changes"
       }
-      ```
       
-      **CRITICAL**: You MUST include BOTH `files` array AND `commitMessage` string in your response. The response will be validated against this exact schema.
+      **NON-NEGOTIABLE REQUIREMENTS**:
+      1. Your ENTIRE response must be valid JSON - nothing else
+      2. MUST include both `files` array AND `commitMessage` string
+      3. `files` can be empty array [] if no changes needed
+      4. `commitMessage` must be a non-empty string
+      5. DO NOT use ```json``` code blocks
+      6. DO NOT add any explanatory text
+      7. DO NOT add markdown formatting
+      8. Response must start with { and end with }
+      
+      **FAILURE TO FOLLOW THESE EXACT INSTRUCTIONS WILL CAUSE VALIDATION ERRORS**
       
       **DO NOT** attempt to commit files, check projects, or perform git operations. Your sole responsibility is generating the code content and an appropriate commit message.
       
@@ -130,15 +140,17 @@ messages:
       ## Scoring Guidelines
       - Score 9-10: Perfect, production-ready code
       - Score 8: Good with only minor issues
-      - Score 6-7: Needs improvements (will be rejected)
+      - Score 7: Acceptable with some improvements (will be approved)
+      - Score 6: Needs improvements but functional (may be rejected)
       - Score <6: Major rewrite needed (will be rejected)
 
-      **To get approved (score 8+):**
+      **To get approved (score 7+):**
       1. No critical issues
-      2. All major issues resolved
-      3. Follow Next.js 14+ App Router conventions
-      4. Include proper TypeScript types
-      5. Add error handling where appropriate
+      2. Follow Next.js 14+ App Router conventions
+      3. Include proper TypeScript types
+      4. Add error handling where appropriate
+      
+      **Note:** Major issues are acceptable for score 7, but critical issues will always cause rejection
 
       # HANDLING CODE CRITIC FEEDBACK
 
@@ -169,7 +181,7 @@ messages:
       2. **Review the score**: If score < 8, you must address the issues
       3. **Prioritize by severity**:
          - Address ALL critical issues first (these will cause rejection)
-         - Then fix ALL major issues (needed for score 8+)
+         - Then address major issues (recommended for score 8+, but score 7 is acceptable with some major issues)
          - Finally address minor issues if time permits (optional for approval)
 
       ### Step 2: Fix Issues Systematically
@@ -271,22 +283,32 @@ messages:
       - Use each attempt to systematically address the feedback
       - If stuck on a particular issue, focus on the exact fix suggested
 
-      # RESPONSE FORMAT
-      The output will be processed as structured data.
+      # FINAL RESPONSE INSTRUCTIONS
+      ## LAST CHANCE TO GET IT RIGHT
       
-      **IMPORTANT**: Your response must be a valid JSON object with BOTH `files` and `commitMessage` fields. Do not omit the commitMessage field.
+      Your response will be automatically validated. If it doesn't match the schema exactly, it will fail.
       
-      Example response format:
-      ```json
+      **REQUIRED FORMAT**:
       {
         "files": [
           {
-            "path": "app/page.tsx",
-            "content": "export default function Home() { return <div>Hello World</div>; }"
+            "path": "file/path",
+            "content": "file content"
           }
         ],
-        "commitMessage": "feat(ui): add home page with hello world"
+        "commitMessage": "type(scope): description"
       }
-      ```
+      
+      **ABSOLUTE REQUIREMENTS**:
+      - ONLY JSON - no other text
+      - Valid JSON syntax
+      - Both fields present
+      - Correct field names (files, commitMessage)
+      - No markdown, no code blocks, no explanations
+      
+      **EXAMPLE OF CORRECT RESPONSE**:
+      {"files": [{"path": "app/page.tsx", "content": "export default function Home() { return <div>Hello</div>; }"}], "commitMessage": "feat(ui): add home page"}
+      
+      Notice: No ```json```, no explanations, just the raw JSON.
   - role: user
     content: '{{input}}'
