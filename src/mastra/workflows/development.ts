@@ -116,13 +116,14 @@ const syncProjectStep = createStep({
         if (!tasksFile) throw new Error("tasks.json not found");
 
         const rawTasks = JSON.parse(tasksFile.content) as z.infer<typeof TaskSchema>[];
+        const pendingTasks = rawTasks.filter(t => t.status === "pending");
         const grouped: Record<GroupId, z.infer<typeof TaskSchema>[]> = {
             core: [],
             ui: [],
             functionality: []
         };
 
-        for (const t of rawTasks) {
+        for (const t of pendingTasks) {
             const gid = (t.group || "core") as GroupId;
             grouped[gid].push(t);
         }
@@ -139,7 +140,7 @@ const syncProjectStep = createStep({
         }
 
         setState({
-            tasks: rawTasks,
+            tasks: pendingTasks,
             repoName,
             owner,
         });
@@ -159,9 +160,9 @@ async function processGroup(
     currentTasks: z.infer<typeof TaskSchema>[],
     repoName: string,
     owner: string,
-    setState?: (state: any) => void
+    setState?: (state: { tasks: z.infer<typeof TaskSchema>[]; repoName: string; owner: string }) => void
 ): Promise<{ completed: number; failed: number; updatedTasks?: z.infer<typeof TaskSchema>[] }> {
-    const tasks = groupData.tasks.filter((t: any) => t.status === "pending");
+    const tasks = groupData.tasks.filter((t: z.infer<typeof TaskSchema>) => t.status === "pending");
 
     if (tasks.length === 0) {
         console.log(`\n[${groupId}] No pending tasks, skipping.`);
@@ -186,7 +187,8 @@ async function processGroup(
 
 
         const context = await searchVector({ data: `${task.title} ${task.description}`, topK: 5, namespace: repoName });
-        console.log(`Context for task ${task.title}: ${context}`);
+        console.log(`Context for task ${task.title}:`);
+        console.log(context.map(c => `File: ${c?.metadata?.filePath}, Score: ${c?.score}, Content Preview: ${c?.data?.slice(0, 100)}...`).join("\n"));
         let feedback = "";
         let files: { path: string; content: string }[] = [];
         let commitMsg = "";
@@ -240,7 +242,12 @@ REPOSITORY: ${repoName}`;
                     }
                 } else {
                     // For first attempt, include full codebase context
-                    prompt += `\n\nCODEBASE CONTEXT:\n${context.map((r: any) => r.data?.slice(0, 3000)).join('\n---\n')}`;
+                    const contextWithContent = context.map((r: any) => {
+                        // Handle different possible response structures from Upstash Vector
+                        const content = r.data || '';
+                        return content ? `File: ${r.metadata?.filePath || 'unknown'}\n${content.slice(0, 3000)}` : `File: ${r.metadata?.filePath || 'unknown'}\n[No content available]`;
+                    });
+                    prompt += `\n\nCODEBASE CONTEXT:\n${contextWithContent.join('\n---\n')}`;
                 }
 
                 // Add delay to prevent API rate limiting
@@ -262,46 +269,32 @@ REPOSITORY: ${repoName}`;
                         }
                     });
                 } catch (validationError: any) {
-                    console.error(`  Validation error caught:`, validationError);
-                    console.error(`  Error message:`, validationError.message);
-
                     // Try to get the raw response if available
                     if (validationError.rawResponse) {
-                        console.error(`  Raw response that failed validation:`, validationError.rawResponse);
-
                         // Try to parse the raw response as JSON
                         try {
                             const rawText = typeof validationError.rawResponse === 'string'
                                 ? validationError.rawResponse
                                 : JSON.stringify(validationError.rawResponse);
 
-                            console.log(`  Attempting to parse raw response as JSON...`);
-
                             // Try to extract JSON from the raw response
                             let jsonMatch = rawText.match(/\{[\s\S]*\}/);
                             if (jsonMatch) {
                                 const parsed = JSON.parse(jsonMatch[0]);
-                                console.log(`  Successfully parsed JSON from raw response`);
 
                                 // Validate the parsed object
                                 if (parsed.files && Array.isArray(parsed.files) && parsed.commitMessage && typeof parsed.commitMessage === 'string') {
                                     res = { object: parsed };
                                     fallbackUsed = true;
-                                    console.log(`  Using fallback parsed response`);
-                                } else {
-                                    console.error(`  Parsed JSON doesn't match required schema`);
                                 }
-                            } else {
-                                console.error(`  No JSON object found in raw response`);
                             }
                         } catch (parseError: any) {
-                            console.error(`  Failed to parse raw response as JSON:`, parseError.message);
+                            // Parsing failed, will use minimal fallback
                         }
                     }
 
                     if (!res) {
                         // Create a minimal valid response as last resort
-                        console.log(`  Using minimal fallback response`);
                         res = {
                             object: {
                                 files: [],
@@ -316,30 +309,18 @@ REPOSITORY: ${repoName}`;
                     console.log(`  WARNING: Used fallback response due to validation error`);
                 }
 
-                console.log(`  Raw response from agent:`, res);
-                console.log(`  Response object:`, res.object);
-
-                // Validate the structured output with more detailed error messages
+                // Validate the structured output
                 if (!res.object) {
-                    console.error(`  No object in response. Full response:`, JSON.stringify(res, null, 2));
                     throw new Error('No object in response from nextjsCoderAgent');
                 }
 
                 if (!Array.isArray(res.object.files)) {
-                    console.error(`  Files is not an array:`, res.object.files);
-                    console.error(`  Files type:`, typeof res.object.files);
-                    console.error(`  Full response object:`, JSON.stringify(res.object, null, 2));
                     throw new Error('Files is not an array in response from nextjsCoderAgent');
                 }
 
                 if (typeof res.object.commitMessage !== 'string') {
-                    console.error(`  CommitMessage is not a string:`, res.object.commitMessage);
-                    console.error(`  CommitMessage type:`, typeof res.object.commitMessage);
-                    console.error(`  Full response object:`, JSON.stringify(res.object, null, 2));
                     throw new Error('CommitMessage is not a string in response from nextjsCoderAgent');
                 }
-
-                console.log(`  Generated response:`, JSON.stringify(res.object, null, 2));
 
                 files = res.object.files;
                 commitMsg = res.object.commitMessage;
@@ -415,26 +396,18 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                         }
                     });
                 } catch (criticValidationError: any) {
-                    console.error(`  Critic validation error caught:`, criticValidationError);
-                    console.error(`  Critic error message:`, criticValidationError.message);
-
                     // Try to get the raw response if available
                     if (criticValidationError.rawResponse) {
-                        console.error(`  Raw critic response that failed validation:`, criticValidationError.rawResponse);
-
                         // Try to parse the raw response as JSON
                         try {
                             const rawText = typeof criticValidationError.rawResponse === 'string'
                                 ? criticValidationError.rawResponse
                                 : JSON.stringify(criticValidationError.rawResponse);
 
-                            console.log(`  Attempting to parse critic raw response as JSON...`);
-
                             // Try to extract JSON from the raw response
                             let jsonMatch = rawText.match(/\{[\s\S]*\}/);
                             if (jsonMatch) {
                                 const parsed = JSON.parse(jsonMatch[0]);
-                                console.log(`  Successfully parsed critic JSON from raw response`);
 
                                 // Validate the parsed object with more flexible requirements
                                 if (typeof parsed.approved === 'boolean' && typeof parsed.score === 'number') {
@@ -445,21 +418,15 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
 
                                     review = { object: parsed };
                                     criticFallbackUsed = true;
-                                    console.log(`  Using fallback parsed critic response`);
-                                } else {
-                                    console.error(`  Parsed critic JSON doesn't match minimum required schema`);
                                 }
-                            } else {
-                                console.error(`  No JSON object found in critic raw response`);
                             }
                         } catch (parseError: any) {
-                            console.error(`  Failed to parse critic raw response as JSON:`, parseError.message);
+                            // Parsing failed, will use minimal fallback
                         }
                     }
 
                     if (!review) {
                         // Create a minimal valid response as last resort
-                        console.log(`  Using minimal fallback critic response`);
                         review = {
                             object: {
                                 approved: false,
@@ -477,51 +444,31 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                     console.log(`  WARNING: Used fallback critic response due to validation error`);
                 }
 
-                console.log(`  Raw response from critic:`, review);
-                console.log(`  Review object:`, review.object);
-
-                // Validate the critic structured output with more detailed logging
+                // Validate the critic structured output
                 if (!review.object) {
-                    console.error(`  No object in review response. Full response:`, JSON.stringify(review, null, 2));
                     throw new Error('No object in response from codeCriticAgent');
                 }
 
                 if (typeof review.object.approved !== 'boolean') {
-                    console.error(`  Approved is not a boolean:`, review.object.approved);
-                    console.error(`  Approved type:`, typeof review.object.approved);
-                    console.error(`  Full review object:`, JSON.stringify(review.object, null, 2));
                     throw new Error('Approved is not a boolean in response from codeCriticAgent');
                 }
 
                 if (typeof review.object.score !== 'number') {
-                    console.error(`  Score is not a number:`, review.object.score);
-                    console.error(`  Score type:`, typeof review.object.score);
-                    console.error(`  Full review object:`, JSON.stringify(review.object, null, 2));
                     throw new Error('Score is not a number in response from codeCriticAgent');
                 }
 
                 if (!Array.isArray(review.object.issues)) {
-                    console.error(`  Issues is not an array:`, review.object.issues);
-                    console.error(`  Issues type:`, typeof review.object.issues);
-                    console.error(`  Full review object:`, JSON.stringify(review.object, null, 2));
                     throw new Error('Issues is not an array in response from codeCriticAgent');
                 }
 
                 if (!Array.isArray(review.object.strengths)) {
-                    console.error(`  Strengths is not an array:`, review.object.strengths);
-                    console.error(`  Strengths type:`, typeof review.object.strengths);
-                    console.error(`  Full review object:`, JSON.stringify(review.object, null, 2));
                     throw new Error('Strengths is not an array in response from codeCriticAgent');
                 }
 
                 if (typeof review.object.summary !== 'string') {
-                    console.error(`  Summary is not a string:`, review.object.summary);
-                    console.error(`  Summary type:`, typeof review.object.summary);
-                    console.error(`  Full review object:`, JSON.stringify(review.object, null, 2));
                     throw new Error('Summary is not a string in response from codeCriticAgent');
                 }
 
-                console.log(`  Critic response:`, JSON.stringify(review.object, null, 2));
 
                 // Store the review for potential fallback use
                 lastReview = review;
@@ -613,11 +560,8 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                     }
                 }
             } catch (e: any) {
-                console.error(`  Error: ${e.message}`);
-
                 // Handle rate limiting specifically
                 if (e.message.includes('并发数过高') || e.message.includes('1302') || e.message.includes('rate limit') || e.statusCode === 429) {
-                    console.log(`  Rate limit hit, waiting 10 seconds before retry...`);
                     await new Promise(resolve => setTimeout(resolve, 10000));
                     feedback = "Rate limit hit, retrying with delay";
                 } else {
@@ -671,7 +615,7 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                 }
 
                 // Create a more descriptive commit message for task completion
-                const taskCompletionCommitMsg = `feat: complete task ${task.id} - ${task.title}`;
+                const taskCompletionCommitMsg = `feat: ${task.title}`;
 
                 console.log(`  Committing: ${taskCompletionCommitMsg}`);
                 await commitFilesToBranch(owner, repoName, "main", allPreviousFiles, taskCompletionCommitMsg, process.env.GITHUB_TOKEN || "");
@@ -711,7 +655,7 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
 
 
                     // Use the agent's generated commit message for the task status update
-                    const taskStatusCommitMsg = commitMsg || `chore(tasks): mark task ${task.id} as completed`;
+                    const taskStatusCommitMsg = commitMsg || `chore(tasks): mark task ${task.title} status as completed`;
 
 
                     if (currentTasks) {

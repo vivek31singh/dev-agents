@@ -68,15 +68,19 @@ Use this tool to:
 
             const matches = results
                 .slice(0, maxResults)
-                .map((result: any) => ({
-                    id: result.id,
-                    score: result.score,
-                    filePath: result.metadata?.filePath || 'unknown',
-                    fileName: result.metadata?.fileName || 'unknown',
-                    content: result.data || '',
-                    chunkIndex: result.metadata?.chunkIndex,
-                    totalChunks: result.metadata?.totalChunks,
-                }));
+                .map((result: any) => {
+                    // Handle different possible response structures from Upstash Vector
+                    const content = result.data || '';
+                    return {
+                        id: result.id,
+                        score: result.score,
+                        filePath: result.metadata?.filePath || 'unknown',
+                        fileName: result.metadata?.fileName || 'unknown',
+                        content: content,
+                        chunkIndex: result.metadata?.chunkIndex,
+                        totalChunks: result.metadata?.totalChunks,
+                    };
+                });
 
             return {
                 matches,
@@ -126,11 +130,15 @@ Use before generating code to understand:
             // Analyze results for project patterns
             const patterns = analyzeProjectPatterns(results);
 
-            const relevantFiles = results.slice(0, 5).map((result: any) => ({
-                filePath: result.metadata?.filePath || 'unknown',
-                content: result.data || '',
-                relevanceScore: result.score,
-            }));
+            const relevantFiles = results.slice(0, 5).map((result: any) => {
+                // Handle different possible response structures from Upstash Vector
+                const content = result.data || '';
+                return {
+                    filePath: result.metadata?.filePath || 'unknown',
+                    content: content,
+                    relevanceScore: result.score,
+                };
+            });
 
             return {
                 query: taskDescription,

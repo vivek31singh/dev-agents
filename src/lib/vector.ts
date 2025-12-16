@@ -11,7 +11,7 @@ export const storeVector = async ({ id, data, metadata, namespace }: { id: strin
             id,
             data,
             metadata,
-        },{namespace: namespace});
+        }, { namespace: namespace });
 
         return result;
     }
@@ -25,8 +25,9 @@ export const searchVector = async ({ data, topK = 3, namespace }: { data: string
         const result = await index.query({
             data,
             topK,
-            includeVectors: true,
+            includeVectors: false, // Changed to false to avoid returning raw embeddings
             includeMetadata: true,
+            includeData: true, // Explicitly request the data field
         }, {
             namespace
         });
