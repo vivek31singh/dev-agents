@@ -2,13 +2,14 @@ import { Agent } from "@mastra/core/agent";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
 import { getPrompt } from "@/lib/langwatch";
+import { getTaskContextTool, checkFileExistsTool } from "../tools";
 
 // Fetch dynamic prompt configuration from LangWatch
 // Create prompt "code-critic" in LangWatch dashboard with the system prompt
 const config = await getPrompt("code-critic");
 
 const memory = new Memory({
-    storage: new LibSQLStore({ url: "file::memory:" }),
+  storage: new LibSQLStore({ url: "file::memory:" }),
 });
 
 /**
@@ -29,10 +30,14 @@ const memory = new Memory({
  * }
  */
 export const codeCriticAgent = new Agent({
-    name: "code-critic-agent",
-    model: config.model,
-    instructions: config.prompt ?? "You are an expert code reviewer and quality assurance specialist for Next.js, React, and TypeScript applications.",
-    memory,
+  name: "code-critic-agent",
+  model: config.model,
+  instructions: config.prompt ?? "You are an expert code reviewer and quality assurance specialist for Next.js, React, and TypeScript applications.",
+  memory,
+  tools: {
+    getTaskContextTool,
+    checkFileExistsTool
+  }
 });
 
 // Fallback instructions if LangWatch prompt is not configured

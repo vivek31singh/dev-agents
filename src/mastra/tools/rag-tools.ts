@@ -1,33 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { searchVector, storeVector, removeVectors } from '@/lib/vector';
-
-/**
- * RAG Tools for Code Generation Workflow
- * 
- * These tools enable agents to:
- * 1. Search existing codebase for context and patterns
- * 2. Store new code in the vector database
- * 3. Query for similar implementations
- */
-
-// Schema for search results
-const SearchResultSchema = z.object({
-    matches: z.array(z.object({
-        id: z.string(),
-        score: z.number(),
-        filePath: z.string(),
-        fileName: z.string(),
-        content: z.string(),
-        chunkIndex: z.number().optional(),
-        totalChunks: z.number().optional(),
-    })),
-    totalMatches: z.number(),
-});
+import { searchVector } from '@/lib/vector';
 
 // Schema for code context
 const CodeContextSchema = z.object({
-    query: z.string(),
     relevantFiles: z.array(z.object({
         filePath: z.string(),
         content: z.string(),
@@ -39,120 +15,6 @@ const CodeContextSchema = z.object({
         hasAppRouter: z.boolean(),
         componentNaming: z.string().optional(),
     }).optional(),
-});
-
-/**
- * Search Codebase Tool
- * 
- * Queries the vector store to find relevant code snippets based on semantic search.
- * Used by agents to understand existing patterns and implementations.
- */
-export const searchCodebaseTool = createTool({
-    id: 'search-codebase',
-    description: `Search the existing codebase for relevant code snippets, patterns, and implementations.
-Use this tool to:
-- Find similar components or implementations
-- Understand existing project patterns and conventions
-- Get context about how specific features are implemented
-- Find related files for a given task`,
-    inputSchema: z.object({
-        query: z.string().describe('Semantic search query describing what you are looking for. Be specific about the functionality, component type, or pattern.'),
-        maxResults: z.number().optional().default(5).describe('Maximum number of results to return (default: 5)'),
-    }),
-    outputSchema: SearchResultSchema,
-    execute: async ({ context }) => {
-        const { query, maxResults = 5 } = context;
-
-        try {
-            const results = await searchVector({ data: query, topK: maxResults });
-
-            const matches = results
-                .slice(0, maxResults)
-                .map((result: any) => {
-                    // Handle different possible response structures from Upstash Vector
-                    const content = result.data || '';
-                    return {
-                        id: result.id,
-                        score: result.score,
-                        filePath: result.metadata?.filePath || 'unknown',
-                        fileName: result.metadata?.fileName || 'unknown',
-                        content: content,
-                        chunkIndex: result.metadata?.chunkIndex,
-                        totalChunks: result.metadata?.totalChunks,
-                    };
-                });
-
-            return {
-                matches,
-                totalMatches: matches.length,
-            };
-        } catch (error) {
-            console.error('[search-codebase] Error:', error);
-            return {
-                matches: [],
-                totalMatches: 0,
-            };
-        }
-    },
-});
-
-/**
- * Get Code Context Tool
- * 
- * Comprehensive context retrieval for code generation tasks.
- * Searches for relevant code AND analyzes project patterns.
- */
-export const getCodeContextTool = createTool({
-    id: 'get-code-context',
-    description: `Get comprehensive code context for a development task.
-This tool searches for relevant existing code AND analyzes project patterns.
-Use before generating code to understand:
-- How similar features are implemented
-- Project-specific conventions and patterns
-- Related components and utilities`,
-    inputSchema: z.object({
-        taskDescription: z.string().describe('Description of the development task or feature to implement'),
-        fileTypes: z.array(z.string()).optional().describe('Optional file types to prioritize (e.g., ["component", "hook", "api"])'),
-    }),
-    outputSchema: CodeContextSchema,
-    execute: async ({ context }) => {
-        const { taskDescription, fileTypes } = context;
-
-        try {
-            // Build enhanced query with file type hints
-            let enhancedQuery = taskDescription;
-            if (fileTypes && fileTypes.length > 0) {
-                enhancedQuery += ` (${fileTypes.join(', ')})`;
-            }
-
-            const results = await searchVector({ data: enhancedQuery, topK: 5 });
-
-            // Analyze results for project patterns
-            const patterns = analyzeProjectPatterns(results);
-
-            const relevantFiles = results.slice(0, 5).map((result: any) => {
-                // Handle different possible response structures from Upstash Vector
-                const content = result.data || '';
-                return {
-                    filePath: result.metadata?.filePath || 'unknown',
-                    content: content,
-                    relevanceScore: result.score,
-                };
-            });
-
-            return {
-                query: taskDescription,
-                relevantFiles,
-                projectPatterns: patterns,
-            };
-        } catch (error) {
-            console.error('[get-code-context] Error:', error);
-            return {
-                query: taskDescription,
-                relevantFiles: [],
-            };
-        }
-    },
 });
 
 // Helper: Analyze project patterns from search results
@@ -183,3 +45,113 @@ function detectNamingConvention(paths: string): string | undefined {
     }
     return undefined;
 }
+
+
+export const getTaskContextTool = createTool({
+    id: 'get-task-context',
+    description: `Get comprehensive task context for a development task.
+CRITICAL: ALWAYS use this tool BEFORE generating any code to ensure implementation consistency.
+
+This tool searches for relevant code AND analyzes project patterns to provide:
+- Existing implementations of similar features to avoid reinventing
+- Project-specific conventions (naming patterns, file structure, etc.)
+- Related components and utilities that can be reused
+- Architecture patterns and coding standards used in the project
+
+WHEN TO USE:
+- Before implementing any new feature or component
+- Before adding new functionality to existing code
+- When you need to understand how the project handles similar tasks
+- When you're unsure about the project's architectural patterns
+
+EXAMPLES:
+- "Add a user authentication system" → Returns existing auth patterns, related components
+- "Create a data visualization dashboard" → Shows existing chart implementations and styling approaches
+- "Implement API endpoints for user management" → Reveals existing API patterns and middleware usage
+
+This tool helps maintain consistency and leverage existing solutions rather than creating duplicate or conflicting implementations.`,
+    inputSchema: z.object({
+        taskDescription: z.string().describe('Description of the development task or feature to implement'),
+        namespace: z.string().optional().describe('Optional namespace to search within (used for project isolation)'),
+    }),
+    outputSchema: CodeContextSchema,
+    execute: async ({ context }) => {
+        const { taskDescription, namespace } = context;
+
+        try {
+            const results = await searchVector({ data: taskDescription, topK: 10, namespace });
+
+            const patterns = analyzeProjectPatterns(results);
+
+            const relevantFiles = results.map((result: any) => {
+                const content = result.data || '';
+                const fileExists = result.metadata?.fileExists || false;
+                return {
+                    fileExists,
+                    filePath: result.metadata?.filePath || 'unknown',
+                    content: content,
+                    relevanceScore: result.score,
+                };
+            });
+
+            return {
+                relevantFiles,
+                projectPatterns: patterns,
+            };
+        } catch (error) {
+            console.error('[get-task-context] Error:', error);
+            return {
+                relevantFiles: [],
+                projectPatterns: {
+                    hasTypeScript: false,
+                    hasTailwind: false,
+                    hasAppRouter: false,
+                    componentNaming: undefined,
+                },
+            };
+        }
+    },
+});
+
+export const checkFileExistsTool = createTool({
+    id: 'check-file-exists',
+    description: `Check if a specific file exists in the codebase.
+CRITICAL: ALWAYS use this tool BEFORE adding any imports or references to avoid broken dependencies.
+
+This tool verifies file existence and provides:
+- Confirmation if a file exists at the specified path
+- Possible alternative file paths if the exact path doesn't exist
+- File content preview to verify it's the correct file
+
+WHEN TO USE:
+- Before adding import statements for any file
+- Before referencing components, utilities, or modules
+- When you're unsure about the exact file path
+- Before creating new files to avoid duplicates
+- When troubleshooting import errors or missing dependencies
+
+EXAMPLES:
+- Before adding "import { Button } from '@/components/ui/button'" → Check if button component exists
+- Before referencing "@/lib/utils" → Verify the utils file exists at that path
+- When looking for a specific configuration file → Check if it exists and where
+
+This tool prevents broken imports, missing file errors, and helps identify the correct paths for existing project files.`,
+    inputSchema: z.object({
+        filePath: z.string().describe('Path of the file to check'),
+        namespace: z.string().optional().describe('Optional namespace to search within (used for project isolation)'),
+    }),
+    outputSchema: z.object({
+        fileExists: z.boolean(),
+    }),
+    execute: async ({ context }) => {
+        const { filePath, namespace } = context;
+
+        try {
+            const results = await searchVector({ data: filePath, topK: 3, namespace });
+            return { fileExists: results.length > 0, possibleFiles: results.map((result: any) => { return { filePath: result.metadata?.filePath, content: result.data } }) };
+        } catch (error) {
+            console.error('[check-file-exists] Error:', error);
+            return { fileExists: false };
+        }
+    },
+});

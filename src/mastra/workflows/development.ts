@@ -41,6 +41,10 @@ function chunkText(text: string, maxChars = 3000): string[] {
 const GROUP_ORDER = ["core", "ui", "functionality"] as const;
 type GroupId = typeof GROUP_ORDER[number];
 
+function createNamespace(owner: string, repoName: string): string {
+    return `${owner}-${repoName}`;
+}
+
 // --- Schemas ---
 const TaskSchema = z.object({
     id: z.union([z.number(), z.string()]),
@@ -111,6 +115,8 @@ const syncProjectStep = createStep({
         const [owner, repoName] = inputData.repositoryName.split("/");
         if (!owner || !repoName) throw new Error("Invalid repository format");
 
+        const namespace = createNamespace(owner, repoName);
+
         const files = await fetchAllRepositoryFiles(owner, repoName, process.env.GITHUB_TOKEN || "");
         const tasksFile = files.find(f => f.path === "tasks.json");
         if (!tasksFile) throw new Error("tasks.json not found");
@@ -131,25 +137,42 @@ const syncProjectStep = createStep({
         console.log(`[sync] Tasks: core=${grouped.core.length}, ui=${grouped.ui.length}, functionality=${grouped.functionality.length}`);
 
         // Vector sync
-        await removeVectors({ prefix: `${repoName}-`, namespace: repoName });
-        for (const f of files) {
-            if (shouldSkipFile(f.path, f.content)) continue;
-            for (const [i, chunk] of chunkText(f.content).entries()) {
-                await storeVector({ id: `${f.path}-${i}`, data: chunk, metadata: { filePath: f.path }, namespace: repoName });
-            }
+        try {
+            await removeVectors({ prefix: `${namespace}-`, namespace: namespace });
         }
+        catch (error) {
+            console.error(`[sync] Error removing vectors: ${error}`);
+        }
+        try {
+            for (const f of files) {
+                if (shouldSkipFile(f.path, f.content)) continue;
+                for (const [i, chunk] of chunkText(f.content).entries()) {
+                    await storeVector({ id: `${namespace}-${f.path}-${i}`, data: chunk, metadata: { filePath: f.path }, namespace: namespace });
+                }
+            }
 
-        setState({
-            tasks: pendingTasks,
-            repoName,
-            owner,
-        });
+            setState({
+                tasks: pendingTasks,
+                repoName,
+                owner,
+            });
 
-        return {
-            core: { tasks: grouped.core, repoName, owner },
-            ui: { tasks: grouped.ui, repoName, owner },
-            functionality: { tasks: grouped.functionality, repoName, owner },
-        };
+            return {
+                core: { tasks: grouped.core, repoName, owner },
+                ui: { tasks: grouped.ui, repoName, owner },
+                functionality: { tasks: grouped.functionality, repoName, owner },
+                repositoryName: inputData.repositoryName,
+            };
+        }
+        catch (error) {
+            console.error(`[sync] Error syncing vectors: ${error}`);
+            return {
+                core: { tasks: [], repoName, owner },
+                ui: { tasks: [], repoName, owner },
+                functionality: { tasks: [], repoName, owner },
+                repositoryName: inputData.repositoryName,
+            };
+        }
     }
 });
 
@@ -176,6 +199,8 @@ async function processGroup(
     let completed = 0;
     let failed = 0;
 
+    const namespace = createNamespace(owner, repoName);
+
     for (const task of tasks) {
         // Add delay between processing different tasks
         if (completed > 0 || failed > 0) {
@@ -186,7 +211,7 @@ async function processGroup(
         console.log(`\n[${groupId}] Task ${task.id}: ${task.title}`);
 
 
-        const context = await searchVector({ data: `${task.title} ${task.description}`, topK: 5, namespace: repoName });
+        const context = await searchVector({ data: `${task.title} ${task.description}`, topK: 10, namespace: namespace });
         console.log(`Context for task ${task.title}:`);
         console.log(context.map(c => `File: ${c?.metadata?.filePath}, Score: ${c?.score}, Content Preview: ${c?.data?.slice(0, 100)}...`).join("\n"));
         let feedback = "";
@@ -212,7 +237,8 @@ async function processGroup(
 
 TASK: ${task.title}
 DESCRIPTION: ${task.description}
-REPOSITORY: ${repoName}`;
+REPOSITORY: ${repoName}
+NAMESPACE: ${namespace}`;
 
                 if (attempt > 1) {
                     // For subsequent attempts, focus only on files with issues to reduce token consumption
@@ -624,10 +650,10 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                     if (shouldSkipFile(f.path, f.content)) continue;
                     for (const [i, chunk] of chunkText(f.content).entries()) {
                         await storeVector({
-                            id: `${f.path}-${i}-${Date.now()}`,
+                            id: `${createNamespace(owner, repoName)}-${f.path}-${i}-${Date.now()}`,
                             data: chunk,
                             metadata: { filePath: f.path },
-                            namespace: repoName
+                            namespace: createNamespace(owner, repoName)
                         });
                     }
                 }
@@ -721,6 +747,7 @@ const processUiStep = createStep({
     outputSchema: GroupResultSchema,
     execute: async ({ inputData, state, setState }) => {
         const { tasks, repoName, owner } = state;
+
         const result = await processGroup("ui", inputData.syncData.ui, tasks, repoName, owner, setState);
 
         // Update the state with the modified tasks if they were updated
@@ -749,6 +776,7 @@ const processFunctionalityStep = createStep({
     outputSchema: z.object({ completedCount: z.number(), failedCount: z.number() }),
     execute: async ({ inputData, state, setState }) => {
         const { tasks, repoName, owner } = state;
+
         const result = await processGroup("functionality", inputData.syncData.functionality, tasks, repoName, owner, setState);
 
         // Update the state with the modified tasks if they were updated

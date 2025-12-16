@@ -2,6 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
 import { getPrompt } from "@/lib/langwatch";
+import { getTaskContextTool } from "../tools";
 
 const config = await getPrompt("project-context-agent");
 
@@ -14,4 +15,7 @@ export const projectContextAgent = new Agent({
   model: config.model,
   instructions: config.prompt ?? "You are a helpful assistant.",
   memory,
+  tools: {
+    getTaskContextTool,
+  }
 });
