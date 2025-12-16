@@ -1,15 +1,15 @@
 import { Agent } from "@mastra/core/agent";
-import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
 import { getPrompt } from "@/lib/langwatch";
 import { getTaskContextTool, checkFileExistsTool } from "../tools";
+import { dbStore } from "@/lib/db-config";
 
 // Fetch dynamic prompt configuration from LangWatch
 // Create prompt "code-critic" in LangWatch dashboard with the system prompt
 const config = await getPrompt("code-critic");
 
 const memory = new Memory({
-  storage: new LibSQLStore({ url: "file::memory:" }),
+  storage: dbStore,
 });
 
 /**

@@ -185,7 +185,11 @@ async function processGroup(
     owner: string,
     setState?: (state: { tasks: z.infer<typeof TaskSchema>[]; repoName: string; owner: string }) => void
 ): Promise<{ completed: number; failed: number; updatedTasks?: z.infer<typeof TaskSchema>[] }> {
+    console.log(`[DEBUG] processGroup called with groupId: ${groupId}, repoName: ${repoName}, owner: ${owner}`);
+    console.log(`[DEBUG] Total tasks in group: ${groupData.tasks.length}`);
+
     const tasks = groupData.tasks.filter((t: z.infer<typeof TaskSchema>) => t.status === "pending");
+    console.log(`[DEBUG] Pending tasks after filtering: ${tasks.length}`);
 
     if (tasks.length === 0) {
         console.log(`\n[${groupId}] No pending tasks, skipping.`);
@@ -195,6 +199,7 @@ async function processGroup(
     console.log(`\n========================================`);
     console.log(`  [${groupId.toUpperCase()}] Processing ${tasks.length} tasks`);
     console.log(`========================================`);
+    console.log(`[DEBUG] Starting task processing loop for group ${groupId}`);
 
     let completed = 0;
     let failed = 0;
@@ -212,8 +217,7 @@ async function processGroup(
 
 
         const context = await searchVector({ data: `${task.title} ${task.description}`, topK: 10, namespace: namespace });
-        console.log(`Context for task ${task.title}:`);
-        console.log(context.map(c => `File: ${c?.metadata?.filePath}, Score: ${c?.score}, Content Preview: ${c?.data?.slice(0, 100)}...`).join("\n"));
+        console.log(`Context for task ${task.title}: Found ${context.length} relevant files`);
         let feedback = "";
         let files: { path: string; content: string }[] = [];
         let commitMsg = "";
@@ -280,12 +284,19 @@ NAMESPACE: ${namespace}`;
                 console.log(`  Adding 2-second delay before calling nextjsCoderAgent...`);
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
-                console.log(`  Calling nextjsCoderAgent with prompt length: ${prompt.length}`);
+                // Log the full prompt (or at least a substantial portion)
+                const promptPreview = prompt.length > 2000 ? prompt.substring(0, 2000) + "...[TRUNCATED]" : prompt;
+                console.log(`[DEBUG] Calling nextjsCoderAgent with prompt (length: ${prompt.length})`);
 
                 let res;
                 let fallbackUsed = false;
+                let agentError = null;
+                let rawResponse = null;
 
                 try {
+                    // console.log(`[DEBUG] Starting nextjsCoderAgent.generate() call...`);
+                    const startTime = Date.now();
+
                     res = await nextjsCoderAgent.generate(prompt, {
                         structuredOutput: {
                             schema: z.object({
@@ -294,32 +305,63 @@ NAMESPACE: ${namespace}`;
                             })
                         }
                     });
+
+                    const endTime = Date.now();
+                    // console.log(`[DEBUG] nextjsCoderAgent.generate() completed in ${endTime - startTime}ms`);
+                    // console.log(`[DEBUG] Response type: ${typeof res}`);
+                    // console.log(`[DEBUG] Response keys: ${res ? Object.keys(res) : 'null'}`);
+
+                    if (res && res.object) {
+                        if (res.object.files) {
+                            console.log(`[DEBUG] Generated ${res.object.files.length} files`);
+                        }
+                    }
                 } catch (validationError: any) {
+                    agentError = validationError;
+                    // console.log(`[DEBUG] ERROR in nextjsCoderAgent.generate():`);
+                    // console.log(`[DEBUG] Error message: ${validationError.message}`);
+                    // console.log(`[DEBUG] Error name: ${validationError.name}`);
+                    // console.log(`[DEBUG] Error stack: ${validationError.stack}`);
+
                     // Try to get the raw response if available
                     if (validationError.rawResponse) {
+                        rawResponse = validationError.rawResponse;
+                        // console.log(`[DEBUG] Raw response available, type: ${typeof rawResponse}`);
+
+                        const rawText = typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse);
+                        // console.log(`[DEBUG] Raw response length: ${rawText.length}`);
+                        // console.log(`[DEBUG] Raw response preview: ${rawText.substring(0, 500)}...`);
+
                         // Try to parse the raw response as JSON
                         try {
-                            const rawText = typeof validationError.rawResponse === 'string'
-                                ? validationError.rawResponse
-                                : JSON.stringify(validationError.rawResponse);
-
-                            // Try to extract JSON from the raw response
                             let jsonMatch = rawText.match(/\{[\s\S]*\}/);
                             if (jsonMatch) {
                                 const parsed = JSON.parse(jsonMatch[0]);
+                                // console.log(`[DEBUG] Successfully parsed JSON from raw response`);
+                                // console.log(`[DEBUG] Parsed object keys: ${Object.keys(parsed)}`);
 
                                 // Validate the parsed object
                                 if (parsed.files && Array.isArray(parsed.files) && parsed.commitMessage && typeof parsed.commitMessage === 'string') {
+                                    // console.log(`[DEBUG] Using parsed response as fallback`);
                                     res = { object: parsed };
                                     fallbackUsed = true;
+                                } else {
+                                    // console.log(`[DEBUG] Parsed response validation failed`);
+                                    // console.log(`[DEBUG] files type: ${typeof parsed.files}, isArray: ${Array.isArray(parsed.files)}`);
+                                    // console.log(`[DEBUG] commitMessage type: ${typeof parsed.commitMessage}`);
                                 }
+                            } else {
+                                // console.log(`[DEBUG] No JSON found in raw response`);
                             }
                         } catch (parseError: any) {
-                            // Parsing failed, will use minimal fallback
+                            // console.log(`[DEBUG] Failed to parse raw response as JSON: ${parseError.message}`);
                         }
+                    } else {
+                        console.log(`[DEBUG] No raw response available in error`);
                     }
 
                     if (!res) {
+                        console.log(`[DEBUG] Creating minimal fallback response`);
                         // Create a minimal valid response as last resort
                         res = {
                             object: {
@@ -331,27 +373,47 @@ NAMESPACE: ${namespace}`;
                     }
                 }
 
+                console.log(`[DEBUG] After agent call - execution continuing`);
+                console.log(`[DEBUG] Fallback used: ${fallbackUsed}`);
+
                 if (fallbackUsed) {
                     console.log(`  WARNING: Used fallback response due to validation error`);
                 }
 
-                // Validate the structured output
+                // Validate the structured output with detailed logging
+                console.log(`[DEBUG] Starting response validation...`);
+
+                if (!res) {
+                    console.log(`[DEBUG] Validation failed: Response is null/undefined`);
+                    throw new Error('No response from nextjsCoderAgent');
+                }
+
                 if (!res.object) {
+                    console.log(`[DEBUG] Validation failed: No object in response`);
+                    console.log(`[DEBUG] Response structure: ${JSON.stringify(res)}`);
                     throw new Error('No object in response from nextjsCoderAgent');
                 }
 
                 if (!Array.isArray(res.object.files)) {
+                    console.log(`[DEBUG] Validation failed: Files is not an array`);
+                    console.log(`[DEBUG] Files type: ${typeof res.object.files}`);
+                    console.log(`[DEBUG] Files value: ${JSON.stringify(res.object.files)}`);
                     throw new Error('Files is not an array in response from nextjsCoderAgent');
                 }
 
                 if (typeof res.object.commitMessage !== 'string') {
+                    console.log(`[DEBUG] Validation failed: CommitMessage is not a string`);
+                    console.log(`[DEBUG] CommitMessage type: ${typeof res.object.commitMessage}`);
+                    console.log(`[DEBUG] CommitMessage value: ${JSON.stringify(res.object.commitMessage)}`);
                     throw new Error('CommitMessage is not a string in response from nextjsCoderAgent');
                 }
 
+                console.log(`[DEBUG] Response validation successful`);
                 files = res.object.files;
                 commitMsg = res.object.commitMessage;
 
                 console.log(`  Files count: ${files.length}, Commit message: "${commitMsg}"`);
+                console.log(`[DEBUG] After extracting files and commit message - execution continuing`);
 
                 // For subsequent attempts with focused fixes, we need to merge the fixed files
                 // with the unchanged files from the previous attempt
@@ -381,6 +443,7 @@ NAMESPACE: ${namespace}`;
                 }
 
                 console.log(`  Attempt ${attempt}/3 - Reviewing code...`);
+                console.log(`[DEBUG] Starting code review phase with ${files.length} files`);
 
                 const criticPrompt = `${CRITIC_INSTRUCTIONS[groupId]}
 
@@ -399,11 +462,16 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                 await new Promise(resolve => setTimeout(resolve, 1500));
 
                 console.log(`  Calling codeCriticAgent with prompt length: ${criticPrompt.length}`);
+                console.log(`[DEBUG] Critic prompt preview: ${criticPrompt.substring(0, 1000)}...`);
 
                 let review;
                 let criticFallbackUsed = false;
+                let criticError = null;
+                let criticRawResponse = null;
 
                 try {
+                    const criticStartTime = Date.now();
+
                     review = await codeCriticAgent.generate(criticPrompt, {
                         structuredOutput: {
                             schema: z.object({
@@ -421,22 +489,46 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                             })
                         }
                     });
+
+                    const criticEndTime = Date.now();
+                    // console.log(`[DEBUG] codeCriticAgent.generate() completed in ${criticEndTime - criticStartTime}ms`);
+                    // console.log(`[DEBUG] Critic response type: ${typeof review}`);
+                    // console.log(`[DEBUG] Critic response keys: ${review ? Object.keys(review) : 'null'}`);
+
+                    if (review && review.object) {
+                        // console.log(`[DEBUG] Critic object keys: ${Object.keys(review.object)}`);
+                        // console.log(`[DEBUG] Approved: ${review.object.approved}, Score: ${review.object.score}`);
+                        // console.log(`[DEBUG] Issues count: ${review.object.issues ? review.object.issues.length : 'undefined'}`);
+                        // console.log(`[DEBUG] Strengths count: ${review.object.strengths ? review.object.strengths.length : 'undefined'}`);
+                        // console.log(`[DEBUG] Summary: "${review.object.summary}"`);
+                    }
                 } catch (criticValidationError: any) {
+                    criticError = criticValidationError;
+                    // console.log(`[DEBUG] ERROR in codeCriticAgent.generate():`);
+                    // console.log(`[DEBUG] Error message: ${criticValidationError.message}`);
+                    // console.log(`[DEBUG] Error name: ${criticValidationError.name}`);
+                    // console.log(`[DEBUG] Error stack: ${criticValidationError.stack}`);
+
                     // Try to get the raw response if available
                     if (criticValidationError.rawResponse) {
+                        criticRawResponse = criticValidationError.rawResponse;
+                        // console.log(`[DEBUG] Critic raw response available, type: ${typeof criticRawResponse}`);
+
+                        const rawText = typeof criticRawResponse === 'string' ? criticRawResponse : JSON.stringify(criticRawResponse);
+                        // console.log(`[DEBUG] Critic raw response length: ${rawText.length}`);
+                        // console.log(`[DEBUG] Critic raw response preview: ${rawText.substring(0, 500)}...`);
+
                         // Try to parse the raw response as JSON
                         try {
-                            const rawText = typeof criticValidationError.rawResponse === 'string'
-                                ? criticValidationError.rawResponse
-                                : JSON.stringify(criticValidationError.rawResponse);
-
-                            // Try to extract JSON from the raw response
                             let jsonMatch = rawText.match(/\{[\s\S]*\}/);
                             if (jsonMatch) {
                                 const parsed = JSON.parse(jsonMatch[0]);
+                                // console.log(`[DEBUG] Successfully parsed JSON from critic raw response`);
+                                // console.log(`[DEBUG] Parsed critic object keys: ${Object.keys(parsed)}`);
 
                                 // Validate the parsed object with more flexible requirements
                                 if (typeof parsed.approved === 'boolean' && typeof parsed.score === 'number') {
+                                    // console.log(`[DEBUG] Using parsed critic response as fallback`);
                                     // Ensure required arrays exist
                                     if (!Array.isArray(parsed.issues)) parsed.issues = [];
                                     if (!Array.isArray(parsed.strengths)) parsed.strengths = [];
@@ -444,14 +536,23 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
 
                                     review = { object: parsed };
                                     criticFallbackUsed = true;
+                                } else {
+                                    // console.log(`[DEBUG] Parsed critic response validation failed`);
+                                    // console.log(`[DEBUG] approved type: ${typeof parsed.approved}`);
+                                    // console.log(`[DEBUG] score type: ${typeof parsed.score}`);
                                 }
+                            } else {
+                                // console.log(`[DEBUG] No JSON found in critic raw response`);
                             }
                         } catch (parseError: any) {
-                            // Parsing failed, will use minimal fallback
+                            // console.log(`[DEBUG] Failed to parse critic raw response as JSON: ${parseError.message}`);
                         }
+                    } else {
+                        console.log(`[DEBUG] No raw response available in critic error`);
                     }
 
                     if (!review) {
+                        console.log(`[DEBUG] Creating minimal fallback critic response`);
                         // Create a minimal valid response as last resort
                         review = {
                             object: {
@@ -466,46 +567,77 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                     }
                 }
 
+                console.log(`[DEBUG] After critic agent call - execution continuing`);
+                console.log(`[DEBUG] Critic fallback used: ${criticFallbackUsed}`);
+
                 if (criticFallbackUsed) {
                     console.log(`  WARNING: Used fallback critic response due to validation error`);
                 }
 
-                // Validate the critic structured output
+                // Validate the critic structured output with detailed logging
+                console.log(`[DEBUG] Starting critic response validation...`);
+
+                if (!review) {
+                    console.log(`[DEBUG] Critic validation failed: Response is null/undefined`);
+                    throw new Error('No response from codeCriticAgent');
+                }
+
                 if (!review.object) {
+                    console.log(`[DEBUG] Critic validation failed: No object in response`);
+                    console.log(`[DEBUG] Critic response structure: ${JSON.stringify(review)}`);
                     throw new Error('No object in response from codeCriticAgent');
                 }
 
                 if (typeof review.object.approved !== 'boolean') {
+                    console.log(`[DEBUG] Critic validation failed: Approved is not a boolean`);
+                    console.log(`[DEBUG] Approved type: ${typeof review.object.approved}`);
+                    console.log(`[DEBUG] Approved value: ${JSON.stringify(review.object.approved)}`);
                     throw new Error('Approved is not a boolean in response from codeCriticAgent');
                 }
 
                 if (typeof review.object.score !== 'number') {
+                    console.log(`[DEBUG] Critic validation failed: Score is not a number`);
+                    console.log(`[DEBUG] Score type: ${typeof review.object.score}`);
+                    console.log(`[DEBUG] Score value: ${JSON.stringify(review.object.score)}`);
                     throw new Error('Score is not a number in response from codeCriticAgent');
                 }
 
                 if (!Array.isArray(review.object.issues)) {
+                    console.log(`[DEBUG] Critic validation failed: Issues is not an array`);
+                    console.log(`[DEBUG] Issues type: ${typeof review.object.issues}`);
+                    console.log(`[DEBUG] Issues value: ${JSON.stringify(review.object.issues)}`);
                     throw new Error('Issues is not an array in response from codeCriticAgent');
                 }
 
                 if (!Array.isArray(review.object.strengths)) {
+                    console.log(`[DEBUG] Critic validation failed: Strengths is not an array`);
+                    console.log(`[DEBUG] Strengths type: ${typeof review.object.strengths}`);
+                    console.log(`[DEBUG] Strengths value: ${JSON.stringify(review.object.strengths)}`);
                     throw new Error('Strengths is not an array in response from codeCriticAgent');
                 }
 
                 if (typeof review.object.summary !== 'string') {
+                    console.log(`[DEBUG] Critic validation failed: Summary is not a string`);
+                    console.log(`[DEBUG] Summary type: ${typeof review.object.summary}`);
+                    console.log(`[DEBUG] Summary value: ${JSON.stringify(review.object.summary)}`);
                     throw new Error('Summary is not a string in response from codeCriticAgent');
                 }
 
+                console.log(`[DEBUG] Critic response validation successful`);
+                console.log(`[DEBUG] Review result - Approved: ${review.object.approved}, Score: ${review.object.score}`);
 
                 // Store the review for potential fallback use
                 lastReview = review;
 
                 if (review?.object?.approved) {
                     console.log(`  ✓ APPROVED (Score: ${review?.object?.score})`);
+                    console.log(`[DEBUG] Code approved, breaking out of ReAct loop`);
                     approved = true;
                     break;
                 } else {
                     feedback = review?.object?.summary || "Not approved";
                     console.log(`  ✗ REJECTED (Score: ${review?.object?.score}): ${feedback}`);
+                    console.log(`[DEBUG] Code rejected, continuing to next attempt`);
 
                     // Extract files with issues for targeted re-generation
                     const issues = review?.object?.issues || [];
@@ -596,28 +728,41 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
             }
         }
 
+        console.log(`[DEBUG] ReAct loop completed for task ${task.id}`);
+        console.log(`[DEBUG] Final status - Approved: ${approved}, Files count: ${files.length}`);
+
         // Fallback mechanism: If we've exhausted all attempts and have files that are "good enough"
         if (!approved && files.length > 0 && lastReview?.object) {
             console.log(`  All 3 attempts exhausted. Checking if code is acceptable for fallback...`);
+            console.log(`[DEBUG] Entering fallback mechanism check`);
 
             // Check if we have a review with a score that's "good enough" (6-7)
             if (typeof lastReview.object.score === 'number' && lastReview.object.score >= 6) {
                 console.log(`  ✓ FALLBACK APPROVAL (Score: ${lastReview.object.score}): Code meets minimum acceptance criteria after 3 attempts`);
+                console.log(`[DEBUG] Score meets minimum criteria, checking for critical issues`);
 
                 // Only allow fallback if there are no critical issues
                 const hasCriticalIssues = lastReview.object.issues?.some((issue: any) => issue.severity === 'critical');
                 if (!hasCriticalIssues) {
                     approved = true;
                     console.log(`  ✓ FALLBACK: No critical issues found, accepting code with score ${lastReview.object.score}`);
+                    console.log(`[DEBUG] Fallback approval successful - no critical issues`);
                 } else {
                     console.log(`  ✗ FALLBACK REJECTED: Critical issues remain, cannot accept code`);
+                    console.log(`[DEBUG] Fallback rejected - critical issues found`);
                 }
             } else {
                 console.log(`  ✗ FALLBACK REJECTED: Score too low (${lastReview.object.score || 'unknown'}) for fallback approval`);
+                console.log(`[DEBUG] Fallback rejected - score too low`);
             }
+        } else {
+            console.log(`[DEBUG] Skipping fallback mechanism - conditions not met`);
+            console.log(`[DEBUG] Approved: ${approved}, Files.length: ${files.length}, Has review: ${!!lastReview?.object}`);
         }
 
+        // console.log(`[DEBUG] About to check if approved and files exist for commit`);
         if (approved && files.length > 0) {
+            console.log(`[DEBUG] Entering commit phase with ${files.length} files`);
             try {
                 // For focused fixes (attempt > 1), we need to include all files
                 // from previous attempts that weren't modified in this round
@@ -686,7 +831,7 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
 
                     if (currentTasks) {
                         await commitFilesToBranch(owner, repoName, "main", [{ path: "tasks.json", content: JSON.stringify(currentTasks) }], taskStatusCommitMsg, process.env.GITHUB_TOKEN || "");
-                        console.log(`  Committed task status update with message: ${taskStatusCommitMsg}`);
+                        // console.log(`  Committed task status update with message: ${taskStatusCommitMsg}`);
                     }
                 } catch (taskErr: any) {
                     console.warn(`  Failed to update task status: ${taskErr.message}`);
@@ -698,11 +843,16 @@ ${attempt > 1 ? `PREVIOUS FEEDBACK: ${feedback}` : ''}`;
                 failed++;
             }
         } else {
+            console.log(`[DEBUG] Not committing - either not approved or no files generated`);
+            console.log(`[DEBUG] Approved: ${approved}, Files count: ${files.length}`);
             failed++;
         }
+
+        // console.log(`[DEBUG] Task ${task.id} processing completed`);
     }
 
     console.log(`\n[${groupId.toUpperCase()}] Complete: ${completed} succeeded, ${failed} failed`);
+    // console.log(`[DEBUG] Group ${groupId} processing finished`);
     return { completed, failed, updatedTasks: currentTasks };
 }
 
@@ -794,7 +944,7 @@ const processFunctionalityStep = createStep({
         console.log(`\n========================================`);
         console.log(`  ALL GROUPS COMPLETE`);
         console.log(`  Total: ${totalCompleted} succeeded, ${totalFailed} failed`);
-        console.log(`========================================\n`);
+        // console.log(`========================================\n`);
 
         return { completedCount: totalCompleted, failedCount: totalFailed };
     }
