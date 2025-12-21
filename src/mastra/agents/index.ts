@@ -3,6 +3,7 @@ import { Memory } from "@mastra/memory";
 import { getPrompt } from "@/lib/langwatch";
 import { getTaskContextTool } from "../tools";
 import { dbStore } from "@/lib/db-config";
+import { planCreationAgent } from "./plan-creation";
 
 const config = await getPrompt("project-context-agent");
 
@@ -19,3 +20,5 @@ export const projectContextAgent = new Agent({
     getTaskContextTool,
   }
 });
+
+export { planCreationAgent };

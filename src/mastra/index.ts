@@ -1,9 +1,10 @@
 import { Mastra } from "@mastra/core/mastra";
 import { ConsoleLogger, LogLevel } from "@mastra/core/logger";
 
-import { projectContextAgent } from "./agents";
+import { projectContextAgent, planCreationAgent } from "./agents";
 import { nextjsCoderAgent } from "./agents/nextjs-coder";
 import { codeCriticAgent } from "./agents/code-critic";
+import { context7Mcp } from "./mcp/context7";
 
 import { developmentWorkflow } from "./workflows/development";
 import { initializeProjectWorkflow } from "./workflows/initialize-project";
@@ -16,6 +17,7 @@ export const mastra = new Mastra({
     projectContextAgent,
     nextjsCoderAgent,
     codeCriticAgent,
+    planCreationAgent,
   },
   workflows: {
     initializeProjectWorkflow,

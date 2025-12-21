@@ -23,7 +23,7 @@
     },
     "project-context-agent": {
       "version": 2,
-      "versionId": "3tVzg7gnWpURgvLwK1KIZ",
+      "versionId": "BewiFPKVJqIlCVsX1Vk82",
       "materialized": "prompts/project-context-agent.prompt.yaml"
     },
     "coder-agent": {
@@ -32,14 +32,19 @@
       "materialized": "prompts\\coder-agent.prompt.yaml"
     },
     "nextjs-coder": {
-      "version": 5,
-      "versionId": "tAyTMM18wn_eyzgXDd4hp",
+      "version": 12,
+      "versionId": "xwrcE-Q5N1hAcN4Hmz6DS",
       "materialized": "prompts/nextjs-coder.prompt.yaml"
     },
     "code-critic": {
-      "version": 4,
-      "versionId": "JfJ7zjfpudv8fRBDTm_9L",
+      "version": 7,
+      "versionId": "e52S2N7rKrUTTn4TiCmKV",
       "materialized": "prompts/code-critic.prompt.yaml"
+    },
+    "plan-creation-agent": {
+      "version": 11,
+      "versionId": "KE-rENiyuHR3W8x3kbmHl",
+      "materialized": "prompts/plan-creation-agent.prompt.yaml"
     }
   }
 }
