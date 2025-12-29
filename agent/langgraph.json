@@ -1,0 +1,11 @@
+{
+  "python_version": "3.12",
+  "dockerfile_lines": [],
+  "dependencies": ["."],
+  "package_manager": "uv",
+  "graphs": {
+    "initialize_project": "graphs/initialize_project.py:initialize_project_graph",
+    "development": "graphs/development.py:development_graph"
+  },
+  "env": "../.env"
+}
