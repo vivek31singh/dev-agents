@@ -1,5 +1,7 @@
 import dspy
+import asyncio
 from .settings import settings
+from .mcp_manager import init_mcp_system
 
 class DSPyConfig:
     def __init__(self):
@@ -19,9 +21,33 @@ class DSPyConfig:
         
         dspy.configure(lm=self.lm)
         self.dspy = dspy
+        self._mcp_initialized = False
 
     def get_dspy(self):
         return self.dspy
+    
+    async def init_mcp(self):
+        """
+        Initialize the MCP system (including context7).
+        This should be called before agents need access to MCP tools.
+        
+        Example:
+            await dspy_config.init_mcp()
+        """
+        if not self._mcp_initialized:
+            await init_mcp_system()
+            self._mcp_initialized = True
+        else:
+            print("ℹ️  MCP already initialized, skipping...")
+    
+    def is_mcp_initialized(self):
+        """
+        Check if MCP system has been initialized.
+        
+        Returns:
+            True if MCP is initialized, False otherwise
+        """
+        return self._mcp_initialized
 
 # Singleton instance
 dspy_config = DSPyConfig()

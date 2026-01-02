@@ -1,8 +1,16 @@
 import dspy
 
 class CoderSignature(dspy.Signature):
-    """Implement a development task by generating the necessary code changes."""
+    """
+    Implement a development task by generating the necessary code changes.
     
+    USE AVAILABLE TOOLS:
+    - resolve_library_id_tool: Resolve library names to get Context7 IDs
+    - get_library_docs_tool: Fetch latest documentation for libraries
+    - search_library_docs_tool: Search and fetch docs in one step
+    
+    Always check latest documentation for libraries/frameworks before generating code.
+    """
     objective: str = dspy.InputField(desc="The specific development task to accomplish")
     golden_context: str = dspy.InputField(desc="Overall project context, tech stack, and guidelines")
     relevant_files: str = dspy.InputField(desc="Contents of existing relevant files from RAG")
@@ -30,7 +38,16 @@ Return format: [{"path": "filepath.ext", "content": "file content"}, {"path": "f
     # This keeps the signature clean and allows flexible assertion handling
 
 class CriticSignature(dspy.Signature):
-    """Review the code changes for correctness, best practices, and alignment with context."""
+    """
+    Review the code changes for correctness, best practices, and alignment with context.
+    
+    USE AVAILABLE TOOLS:
+    - resolve_library_id_tool: Resolve library names to get Context7 IDs
+    - get_library_docs_tool: Fetch latest documentation for libraries
+    - search_library_docs_tool: Search and fetch docs in one step
+    
+    Always verify code against latest documentation using these tools before approving.
+    """
     goal: str = dspy.InputField(desc="The original task")
     file_changes: str = dspy.InputField(desc="The proposed code changes")
     golden_context: str = dspy.InputField(desc="Project context and guidelines")
@@ -39,3 +56,6 @@ class CriticSignature(dspy.Signature):
     score: float = dspy.OutputField(desc="Quality score from 0.0 to 10.0")
     issues: str = dspy.OutputField(desc="List of specific issues found, or 'None' if approved")
     is_approved: bool = dspy.OutputField(desc="True if the code is ready to be committed, False otherwise")
+    documentation_references: str = dspy.OutputField(
+        desc="Documentation references used during review (library names, topics, and key findings)"
+    )

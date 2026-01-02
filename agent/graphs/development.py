@@ -2,12 +2,13 @@
 Autonomous Development Workflow Graph
 
 This graph implements a RAG-driven, self-directed development process:
-1. Syncs repository to vector store
-2. Plans next objective based on golden context
-3. Implements objective using ReAct pattern with self-correction
-4. Commits changes and updates vector store
-5. Reflects on progress
-6. Repeats until project is complete or max iterations reached
+1. Initializes MCP system (context7 for latest documentation)
+2. Syncs repository to vector store
+3. Plans next objective based on golden context
+4. Implements objective using ReAct pattern with self-correction
+5. Commits changes and updates vector store
+6. Reflects on progress
+7. Repeats until project is complete or max iterations reached
 """
 
 import asyncio
@@ -15,16 +16,16 @@ import json
 import base64
 from langgraph.graph import StateGraph, START, END
 from schema.state import DevelopmentState
-from utils.git import sync_repository_to_vector_store, push_files, get_github_owner
+from utils.git import sync_repository_to_vector_store, push_files, get_github_owner, fetch_golden_context
 from utils.vector_store import search_documents, upsert_document
 from utils.chunking import chunk_text
+from utils.config import dspy_config
 from agents.agents import (
     run_planning_agent,
     run_coder_agent_with_assertions,
     run_critic_agent,
     run_reflection_agent
 )
-
 
 async def get_codebase_summary(namespace: str, top_k: int = 20) -> str:
     """Get a summary of the current codebase from vector store."""
@@ -52,6 +53,25 @@ async def get_codebase_summary(namespace: str, top_k: int = 20) -> str:
 # GRAPH NODES
 # ============================================================================
 
+async def InitializeMCPSystem(state: DevelopmentState):
+    """
+    Initialize the MCP system (including context7 for latest documentation).
+    This should be called before any agents need access to MCP tools.
+    """
+    print("=" * 60)
+    print("INITIALIZING MCP SYSTEM")
+    print("=" * 60)
+    
+    try:
+        await dspy_config.init_mcp()
+        print("✅ MCP system initialized successfully")
+        return {}
+    except Exception as e:
+        print(f"⚠️  Failed to initialize MCP system: {e}")
+        print("   Agents will continue without MCP tools")
+        return {}
+
+
 async def InitializeFromRepository(state: DevelopmentState):
     """
     Initialize the development workflow from just a repository name.
@@ -62,6 +82,10 @@ async def InitializeFromRepository(state: DevelopmentState):
     print("=" * 60)
     
     repository_name = state.get("repository_name")
+    
+    # Check if repository_name is None or empty
+    if repository_name is None or repository_name == "":
+        raise ValueError("repository_name is required but was not provided in the state")
     
     # Parse owner/repo
     if "/" in repository_name:
@@ -75,54 +99,39 @@ async def InitializeFromRepository(state: DevelopmentState):
     print(f"📦 Repository: {owner}/{repo_name}")
     print(f"🔖 Namespace: {namespace}")
     
-    # Fetch golden context from repo markdown files
-    print("📚 Fetching golden context from repository...")
+    # Fetch golden context from repository using utility
+    print("📚 Attempting to fetch golden context from repository...")
+    golden_context = await fetch_golden_context(owner, repo_name)
     
-    import httpx
-    from utils.settings import settings
+    if not golden_context:
+        print("⚠️  No golden context found in repository. Agent will attempt to bootstrap context autonomously.")
+    else:
+        print(f"✅ Loaded context ({len(golden_context)} chars)")
     
-    token = settings.github_token
-    headers = {"Authorization": f"token {token}"}
-    
-    golden_context_parts = []
-    
-    # Files to fetch for golden context
-    context_files = [
-        "project_brief.md",
-        "technical_spec.md",
-        "implementation_plan.md",
-        "coding_guidelines.md"
-    ]
-    
-    async with httpx.AsyncClient() as client:
-        for filename in context_files:
-            try:
-                url = f"https://api.github.com/repos/{owner}/{repo_name}/contents/{filename}"
-                response = await client.get(url, headers=headers)
-                
-                if response.status_code == 200:
-                    import base64
-                    content_b64 = response.json()["content"]
-                    content = base64.b64decode(content_b64).decode("utf-8")
-                    golden_context_parts.append(f"# {filename}\n\n{content}")
-                    print(f"  ✓ Loaded {filename}")
-                else:
-                    print(f"  ⚠️  {filename} not found (skipping)")
-            except Exception as e:
-                print(f"  ⚠️  Failed to load {filename}: {e}")
-    
-    if not golden_context_parts:
-        raise Exception("No golden context files found in repository. Please ensure project_brief.md and technical_spec.md exist.")
-    
-    golden_context = "\n\n---\n\n".join(golden_context_parts)
-    
-    print(f"✅ Loaded {len(golden_context_parts)} context files ({len(golden_context)} chars)")
+    # 2. Check for existing progress/checkpoints
+    print("🏁 Checking for existing progress...")
+    completed_features = []
+    try:
+        url = f"https://api.github.com/repos/{owner}/{repo_name}/contents/.agent/progress.json"
+        response = await client.get(url, headers=headers)
+        if response.status_code == 200:
+            import base64
+            import json
+            content_b64 = response.json()["content"]
+            progress_data = json.loads(base64.b64decode(content_b64).decode("utf-8"))
+            completed_features = progress_data.get("completed_features", [])
+            print(f"  ✓ Found existing progress: {len(completed_features)} features completed")
+    except Exception as e:
+        print(f"  ⚠️  Failed to load progress: {e}")
+
+    print(f"✅ Loaded context ({len(golden_context)} chars)")
     
     return {
         "owner": owner,
         "repo_name": repo_name,
         "namespace": namespace,
-        "golden_context": golden_context
+        "golden_context": golden_context,
+        "completed_features": completed_features
     }
 
 
@@ -156,33 +165,70 @@ async def PlanNextObjective(state: DevelopmentState):
     print(f"PLANNING (Iteration {state.get('iterations', 0)})")
     print("=" * 60)
     
+    owner = state.get("owner")
+    repo_name = state.get("repo_name")
+    golden_context = state.get("golden_context")
+    
+    # Re-fetch context if missing (Autonomous safety & Bootstrapping)
+    if not golden_context:
+        print("🔗 Context missing from state, checking repository...")
+        golden_context = await fetch_golden_context(owner, repo_name)
+        
+    # Check if we are in bootstrapping mode (no context at all)
+    is_bootstrapping = not golden_context
+    if is_bootstrapping:
+        print("🚀 BOOTSTRAP MODE: No project documentation found. Planning initialization task.")
+        
     # Get current codebase state from RAG
     current_state = await get_codebase_summary(state.get("namespace"))
     
     # Get completed features list
     completed_features = state.get("completed_features", [])
-    completed_features_str = "\n".join(f"- {f}" for f in completed_features) if completed_features else "None yet"
     
-    # Run planning agent
-    print("🤔 Planning agent deciding next objective...")
+    # Filter out failed objectives for display
+    successful_features = [f for f in completed_features if not f.startswith("[FAILED]")]
+    failed_features = [f for f in completed_features if f.startswith("[FAILED]")]
+    
+    completed_features_str = "\n".join(f"- {f}" for f in successful_features) if successful_features else "None yet"
+    failed_features_str = "\n".join(f"- {f}" for f in failed_features) if failed_features else ""
+    
+    if failed_features_str:
+        print(f"⚠️  Previously failed objectives:\n{failed_features_str}")
+    
+    # If bootstrapping, we provide a modified prompt to the planning agent
+    print(f"🤔 Planning agent deciding next objective...")
+    
+    context_for_agent = golden_context
+    if is_bootstrapping:
+        context_for_agent = "SYSTEM: The repository is EMPTY or missing documentation. The first goal MUST be to generate a project_brief.md, technical_spec.md, and implementation_plan.md based on the user's requirements."
+
     plan_response = await asyncio.to_thread(
         run_planning_agent,
-        golden_context=state.get("golden_context"),
+        golden_context=context_for_agent,
         current_state=current_state,
-        completed_features=completed_features_str
+        completed_features=completed_features_str,
+        user_feedback=state.get("user_feedback", "")
     )
     
     next_objective = plan_response.next_objective
     reasoning = plan_response.reasoning
     
+    # Check if this objective was previously failed
+    if any(next_objective in failed for failed in failed_features):
+        print(f"\n⚠️  WARNING: This objective was previously failed!")
+        print("  Planning agent should avoid repeating failed objectives.")
+        # You might want to add logic here to request a different objective
+    
     print(f"\n📋 Next Objective: {next_objective}")
     print(f"💡 Reasoning: {reasoning}")
     
     return {
+        "golden_context": golden_context, # Update in state if we re-fetched
         "current_objective": next_objective,
         "attempt": 0,  # Reset attempt counter
         "approved": False,  # Reset approval
-        "critique_feedback": ""  # Clear feedback
+        "critique_feedback": "",  # Clear feedback
+        "user_feedback": ""  # Clear after use
     }
 
 
@@ -274,7 +320,16 @@ async def ProcessObjective(state: DevelopmentState):
     
     # All attempts exhausted
     print("  ❌ All attempts exhausted, objective failed")
-    return {"approved": False, "failed_count": state.get("failed_count", 0) + 1}
+    
+    # Add the failed objective to completed_features to prevent retry
+    completed_features = state.get("completed_features", [])
+    failed_objective = f"[FAILED] {objective}"
+    
+    return {
+        "approved": False,
+        "failed_count": state.get("failed_count", 0) + 1,
+        "completed_features": completed_features + [failed_objective]
+    }
 
 
 async def CommitChanges(state: DevelopmentState):
@@ -288,20 +343,31 @@ async def CommitChanges(state: DevelopmentState):
     files = state.get("generated_files", [])
     commit_message = state.get("commit_message")
     
-    print(f"📤 Committing {len(files)} files...")
-    print(f"💬 Message: {commit_message}")
+    # Update completed features list
+    completed_features = state.get("completed_features", []) + [state.get("current_objective")]
+    
+    # Create/Update .agent/progress.json checkpoint
+    import json
+    progress_file = {
+        "path": ".agent/progress.json",
+        "content": json.dumps({
+            "repository": f"{owner}/{repo_name}",
+            "completed_features": completed_features,
+            "last_commit": commit_message
+        }, indent=2)
+    }
+    
+    # Add progress file to the commit
+    files_to_push = files + [progress_file]
     
     try:
         commit_url = await push_files(
             owner=owner,
             repo_name=repo_name,
-            files=files,
+            files=files_to_push,
             commit_message=commit_message
         )
         print(f"✅ Committed: {commit_url}")
-        
-        # Update completed features
-        completed_features = state.get("completed_features", []) + [state.get("current_objective")]
         
         return {
             "completed_features": completed_features,
@@ -400,7 +466,17 @@ def should_continue(state: DevelopmentState) -> str:
     
     # Check if we have a current objective that failed
     if not state.get("approved", False) and state.get("current_objective"):
-        print(f"\n⚠️  Objective failed. Moving to next.")
+        # Track consecutive failures for the same objective
+        failed_count = state.get("failed_count", 0)
+        if failed_count >= 3:  # Skip objective after 3 failed attempts
+            print(f"\n⚠️  Objective failed {failed_count} times. Skipping and moving to next.")
+            # Add to completed_features with a failure marker
+            completed_features = state.get("completed_features", [])
+            failed_objective = f"[FAILED] {state.get('current_objective')}"
+            # Update state directly instead of returning a dict
+            state["completed_features"] = completed_features + [failed_objective]
+            return "plan"
+        print(f"\n⚠️  Objective failed (attempt {failed_count + 1}). Moving to next.")
         return "plan"
     
     # Check if we just completed an objective
@@ -413,13 +489,21 @@ def should_continue(state: DevelopmentState) -> str:
 
 def check_completion(state: DevelopmentState) -> str:
     """Check if project is complete after reflection."""
-    # This would ideally check the reflection agent's output
-    # For now, we'll use iterations as a proxy
-    # In a real implementation, you'd check reflection_response.is_complete
-    
+    # Check max iterations first
     if state.get("iterations", 0) >= state.get("max_iterations", 10):
         return "end"
     
+    # Check if we've reached the commit limit for this run
+    if state.get("completed_count", 0) >= state.get("max_commits", 3):
+        print(f"\n✅ Max commits ({state.get('max_commits', 3)}) reached for this run. Stopping for review.")
+        return "end"
+    
+    # Check if we've exceeded failure threshold
+    if state.get("failed_count", 0) >= 5:  # Stop after 5 failed objectives
+        print(f"\n⚠️  Too many failures ({state.get('failed_count', 0)}). Stopping to prevent infinite loop.")
+        return "end"
+    
+    # Continue planning
     return "plan"
 
 
@@ -430,6 +514,7 @@ def check_completion(state: DevelopmentState) -> str:
 graph = StateGraph(DevelopmentState)
 
 # Add nodes
+graph.add_node("InitializeMCPSystem", InitializeMCPSystem)
 graph.add_node("InitializeFromRepository", InitializeFromRepository)
 graph.add_node("SyncRepository", SyncRepository)
 graph.add_node("PlanNextObjective", PlanNextObjective)
@@ -439,7 +524,8 @@ graph.add_node("SyncChangedFiles", SyncChangedFiles)
 graph.add_node("ReflectOnProgress", ReflectOnProgress)
 
 # Define edges
-graph.add_edge(START, "InitializeFromRepository")
+graph.add_edge(START, "InitializeMCPSystem")
+graph.add_edge("InitializeMCPSystem", "InitializeFromRepository")
 graph.add_edge("InitializeFromRepository", "SyncRepository")
 graph.add_edge("SyncRepository", "PlanNextObjective")
 graph.add_edge("PlanNextObjective", "ProcessObjective")
@@ -468,5 +554,6 @@ graph.add_conditional_edges(
     }
 )
 
-# Compile
-development_graph = graph.compile()
+# Compile the graph with interrupts for human-in-the-loop
+# This allows the user to review commits and provide feedback before the next objective
+development_graph = graph.compile(interrupt_after=["CommitChanges"])

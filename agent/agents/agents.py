@@ -1,4 +1,10 @@
 from utils.config import dspy_config
+from utils.mcp_tools import (
+    resolve_library_id_tool,
+    get_library_docs_tool,
+    search_library_docs_tool,
+    get_all_mcp_tools
+)
 from schema.signatures import ProjectRoadmapSignature, PlanningSignature, ReflectionSignature
 from schema.development_signatures import CoderSignature, CriticSignature
 
@@ -43,12 +49,28 @@ def check_file_exists_tool(file_path: str, namespace: str = "") -> str:
         return json.dumps(result, indent=2)
     return str(result)
 
-# Initialize agents
+# Initialize agents with context7 tools for latest documentation access
 coder_agent = dspy.ReAct(
     CoderSignature,
-    tools=[get_task_context_tool, check_file_exists_tool]
+    tools=[
+        get_task_context_tool,
+        check_file_exists_tool,
+        resolve_library_id_tool,
+        get_library_docs_tool,
+        search_library_docs_tool
+    ]
 )
-critic_agent = dspy.ChainOfThought(CriticSignature)
+
+critic_agent = dspy.ReAct(
+    CriticSignature,
+    tools=[
+        get_task_context_tool,
+        check_file_exists_tool,
+        resolve_library_id_tool,
+        get_library_docs_tool,
+        search_library_docs_tool
+    ]
+)
 planning_agent = dspy.ChainOfThought(PlanningSignature)
 reflection_agent = dspy.ChainOfThought(ReflectionSignature)
 
@@ -78,8 +100,9 @@ def run_critic_agent(objective: str, file_changes: list[dict], golden_context: s
     file_changes is a list[dict] with 'path' and 'content' keys.
     """
     # Convert file_changes to string format for critic agent
+    # Don't truncate content - let the critic see the full file
     file_changes_str = "\n\n".join([
-        f"// {file['path']}\n{file['content'][:500]}..."
+        f"// {file['path']}\n{file['content']}"
         for file in file_changes
     ])
     
@@ -90,12 +113,13 @@ def run_critic_agent(objective: str, file_changes: list[dict], golden_context: s
     )
     return response
 
-def run_planning_agent(golden_context: str, current_state: str, completed_features: str):
+def run_planning_agent(golden_context: str, current_state: str, completed_features: str, user_feedback: str = ""):
     """Run the planning agent to decide next objective."""
     response = planning_agent(
         golden_context=golden_context,
         current_state=current_state,
-        completed_features=completed_features
+        completed_features=completed_features,
+        user_feedback=user_feedback
     )
     return response
 

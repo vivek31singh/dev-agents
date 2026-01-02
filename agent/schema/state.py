@@ -41,5 +41,7 @@ class DevelopmentState(CopilotKitState):
     # Metrics
     iterations: int = Field(default=0, validation_alias="iterations")
     max_iterations: int = Field(default=10, validation_alias="max_iterations")  # Safety limit
+    max_commits: int = Field(default=3, validation_alias="max_commits")  # Commit limit per run
     completed_count: int = Field(default=0, validation_alias="completed_count")
     failed_count: int = Field(default=0, validation_alias="failed_count")
+    user_feedback: str = Field(default="", validation_alias="user_feedback")

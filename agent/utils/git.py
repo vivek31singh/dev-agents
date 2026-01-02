@@ -38,7 +38,15 @@ async def sync_repository_to_vector_store(owner: str, repo: str) -> str:
              tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/master?recursive=1"
              response = await client.get(tree_url, headers=headers)
              if response.status_code != 200:
-                raise Exception("Failed to fetch repository tree.")
+                # Add better error logging
+                error_msg = f"Failed to fetch repository tree for {owner}/{repo}. Status: {response.status_code}"
+                try:
+                    error_detail = response.json()
+                    error_msg += f", Detail: {error_detail.get('message', 'Unknown error')}"
+                except:
+                    pass
+                print(f"ERROR: {error_msg}")
+                raise Exception(error_msg)
 
         tree_data = response.json()
         
@@ -283,3 +291,41 @@ async def push_files(owner: str, repo_name: str, files: list, commit_message: st
         await update_branch(owner, repo_name, "main", new_commit_sha, token, client)
         
         return f"https://github.com/{owner}/{repo_name}"
+
+
+async def fetch_golden_context(owner: str, repo: str) -> str:
+    """
+    Fetch golden context files (brief, specs, etc) from GitHub.
+    Returns a consolidated string or empty string if no files found.
+    """
+    token = settings.github_token
+    headers = {"Authorization": f"token {token}"}
+    
+    context_files = [
+        "project_brief.md",
+        "technical_spec.md",
+        "implementation_plan.md",
+        "coding_guidelines.md",
+        "README.md"
+    ]
+    
+    golden_context_parts = []
+    async with httpx.AsyncClient() as client:
+        for filename in context_files:
+            try:
+                url = f"https://api.github.com/repos/{owner}/{repo}/contents/{filename}"
+                response = await client.get(url, headers=headers)
+                
+                if response.status_code == 200:
+                    import base64
+                    content_b64 = response.json()["content"]
+                    content = base64.b64decode(content_b64).decode("utf-8")
+                    golden_context_parts.append(f"# {filename}\n\n{content}")
+            except Exception:
+                # Silently skip missing/failed files
+                pass
+    
+    if not golden_context_parts:
+        return ""
+        
+    return "\n\n---\n\n".join(golden_context_parts)

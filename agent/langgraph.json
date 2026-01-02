@@ -1,7 +1,7 @@
 {
   "python_version": "3.12",
   "dockerfile_lines": [],
-  "dependencies": ["."],
+  "dependencies": ["./graphs", "./schema", "./utils", "./agents"],
   "package_manager": "uv",
   "graphs": {
     "initialize_project": "graphs/initialize_project.py:initialize_project_graph",

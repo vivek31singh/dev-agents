@@ -51,6 +51,7 @@ class PlanningSignature(dspy.Signature):
     golden_context: str = dspy.InputField(desc="Project goals, architecture, and technical specifications")
     current_state: str = dspy.InputField(desc="Summary of what's been built so far (from RAG)")
     completed_features: str = dspy.InputField(desc="List of completed work")
+    user_feedback: str = dspy.InputField(desc="Feedback or directions from the human operator")
     
     next_objective: str = dspy.OutputField(desc="Next logical feature/component to implement")
     reasoning: str = dspy.OutputField(desc="Why this is the right next step")
